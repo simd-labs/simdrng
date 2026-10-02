@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/DiamonDinoia/simdrng/actions/workflows/ci.yml/badge.svg)](https://github.com/DiamonDinoia/simdrng/actions/workflows/ci.yml)
 [![Docs](https://readthedocs.org/projects/simdrng/badge/?version=latest)](https://simdrng.readthedocs.io/en/latest/)
-[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json&project=DiamonDinoia/simdrng)](https://codspeed.io/DiamonDinoia/simdrng)
 [![codecov](https://codecov.io/gh/DiamonDinoia/simdrng/branch/main/graph/badge.svg)](https://codecov.io/gh/DiamonDinoia/simdrng)
 [![License: BSD-3-Clause-Attribution](https://img.shields.io/badge/License-BSD--3--Clause--Attribution-blue.svg)](LICENSE)
 
@@ -119,7 +118,7 @@ ctest --preset test
 ```
 
 `CMakePresets.json` ships ready-made profiles so you rarely need raw `-D` flags:
-`release`, `debug`, `ci`, `bench`, `codspeed`, `sanitizers`, `tsan`, `valgrind`,
+`release`, `debug`, `ci`, `bench`, `sanitizers`, `tsan`, `valgrind`,
 `static-analysis`, `coverage`.
 
 CMake options:
@@ -131,7 +130,6 @@ CMake options:
 | `SIMDRNG_BUILD_EXAMPLES`  | OFF     | Build C++ examples under `examples/cpp`                               |
 | `SIMDRNG_BUILD_DOCS`      | OFF     | Generate Sphinx/Doxygen docs                                          |
 | `SIMDRNG_MARCH_NATIVE`    | OFF     | Compile benchmarks with `-march=native`                               |
-| `SIMDRNG_ENABLE_CODSPEED` | OFF     | Link codspeed-cpp into the bench harness                              |
 | `SIMDRNG_USE_SANITIZERS`  | OFF     | `ON` = ASan+UBSan, `TSAN` = ThreadSanitizer                           |
 
 **Consume from another CMake project** — install and `find_package`:
@@ -179,7 +177,7 @@ pip install -e '.[test]' --no-build-isolation
 
 The full matrix runs in CI and is rendered to SVG on the
 [`benchmark-results`](https://github.com/DiamonDinoia/simdrng/tree/benchmark-results)
-branch; CodSpeed tracks regressions per-PR.
+branch.
 
 The chart below shows `u64` bulk throughput — the native output of every
 engine — comparing the scalar loop against SIMD `generate()`. Per-call latency,
