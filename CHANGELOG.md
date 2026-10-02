@@ -21,6 +21,9 @@ Pre-1.0, the public API may change between minor versions.
 
 ### Removed
 
+- CodSpeed regression tracking: the `codspeed` workflow and CMake preset, the
+  `SIMDRNG_ENABLE_CODSPEED` option, and the codspeed-cpp fetch. Benchmarks
+  still run via Google Benchmark.
 - The scalar-only build mode (`SIMDRNG_WITH_XSIMD=OFF`) and its dependency-free
   header install. xsimd and poet are now mandatory; the SIMD backends are always
   built. Consumers who only want a scalar generator can include

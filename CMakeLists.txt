@@ -67,11 +67,6 @@ option(SIMDRNG_BUILD_EXAMPLES "Build the C++ examples under examples/cpp" OFF)
 option(SIMDRNG_BUILD_DOCS "Build Sphinx/Doxygen documentation" OFF)
 option(SIMDRNG_MARCH_NATIVE "Build benchmarks with -march=native" OFF)
 option(
-    SIMDRNG_ENABLE_CODSPEED
-    "Link the benchmark harness against codspeed-cpp for CodSpeed instrumentation"
-    OFF
-)
-option(
     SIMDRNG_DEVEL
     "Enable development tooling (CPM, warnings helpers, coverage, analysis)"
     OFF

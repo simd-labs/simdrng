@@ -87,21 +87,6 @@
       }
     },
     {
-      "name": "codspeed",
-      "displayName": "CodSpeed instrumentation",
-      "description": "RelWithDebInfo benchmark build linked against codspeed-cpp for CodSpeed instrumentation.",
-      "inherits": "default",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "SIMDRNG_ENABLE_CODSPEED": "ON",
-        "CODSPEED_MODE": "instrumentation",
-        "SIMDRNG_BUILD_TESTS": "ON",
-        "SIMDRNG_BUILD_EXAMPLES": "OFF",
-        "SIMDRNG_BUILD_PYTHON": "OFF",
-        "SIMDRNG_MARCH_NATIVE": "OFF"
-      }
-    },
-    {
       "name": "sanitizers",
       "displayName": "Sanitizers (ASan + UBSan)",
       "description": "Debug build instrumented with AddressSanitizer + UndefinedBehaviorSanitizer. xsimd::dispatch keeps the AVX-512 tier dormant on lesser CPUs, so no -march guard is needed.",
@@ -256,7 +241,6 @@
     { "name": "docs", "configurePreset": "docs", "targets": ["docs"] },
     { "name": "ci", "configurePreset": "ci" },
     { "name": "bench", "configurePreset": "bench", "targets": ["benchmarks"] },
-    { "name": "codspeed", "configurePreset": "codspeed", "targets": ["benchmarks"] },
     { "name": "sanitizers", "configurePreset": "sanitizers" },
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "valgrind", "configurePreset": "valgrind" },

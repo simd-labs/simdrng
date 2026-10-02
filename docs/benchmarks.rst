@@ -20,11 +20,6 @@ The latest charts (gcc-15):
    :alt: Scalar vs SIMD speedup (gcc-15)
    :align: center
 
-CodSpeed tracks per-benchmark CPU-cycle regressions on every PR:
-
-.. image:: https://img.shields.io/endpoint?url=https://codspeed.io/badge.json&project=DiamonDinoia/simdrng
-   :alt: CodSpeed badge
-
 Performance
 -----------
 

@@ -14,7 +14,7 @@ cpmaddpackage(
 set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT SIMDRNG_ENABLE_CODSPEED)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Detect libpfm4 (header + .so). When both are present, enable hardware
     # counters in Google Benchmark; otherwise fall back silently so local
     # builds without libpfm4-dev still work.
@@ -34,38 +34,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT SIMDRNG_ENABLE_CODSPEED)
     endif()
 endif()
 
-if(SIMDRNG_ENABLE_CODSPEED)
-    # codspeed-cpp ships its own fork of google/benchmark under google_benchmark/.
-    # The fork's CMakeLists.txt unconditionally pulls in codspeed-cpp's `core/`,
-    # which defines an option(ENABLE_TESTS) that clashes with CMake's BUILD_TESTING
-    # convention. Shield it via a local ENABLE_TESTS=OFF (CMP0077 NEW -> option()
-    # respects normal vars).
-    cpmaddpackage(
-            NAME codspeed
-            GITHUB_REPOSITORY CodSpeedHQ/codspeed-cpp
-            GIT_TAG main
-            GIT_SHALLOW YES
-            GIT_PROGRESS YES
-            DOWNLOAD_ONLY YES
-    )
-    set(ENABLE_TESTS OFF)
-    add_subdirectory(
-        ${codspeed_SOURCE_DIR}/google_benchmark
-        ${CMAKE_BINARY_DIR}/_deps/codspeed-benchmark-build
-        EXCLUDE_FROM_ALL
-    )
-    set(ENABLE_TESTS ON)
-else()
-    cpmaddpackage(
-            NAME benchmark
-            GITHUB_REPOSITORY google/benchmark
-            VERSION 1.9.5
-            GIT_SHALLOW YES
-            GIT_PROGRESS YES
-            EXCLUDE_FROM_ALL YES
-            SYSTEM
-    )
-endif()
+cpmaddpackage(
+        NAME benchmark
+        GITHUB_REPOSITORY google/benchmark
+        VERSION 1.9.5
+        GIT_SHALLOW YES
+        GIT_PROGRESS YES
+        EXCLUDE_FROM_ALL YES
+        SYSTEM
+)
 list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/contrib)
 
 enable_language(C)
@@ -78,7 +55,7 @@ enable_language(C)
 # them alongside xsimd/poet/Catch2/...), else in a stable build-tree dir. The
 # download is STATUS-checked with a short retry and is a HARD ERROR on failure:
 # a silent empty include previously surfaced as `s`/`next` undeclared in the
-# benchmark build (the original CodSpeed failure). ChaCha uses Monocypher
+# benchmark build. ChaCha uses Monocypher
 # (fetched via CPM below), not a downloaded reference.
 # ---------------------------------------------------------------------------
 if(DEFINED ENV{CPM_SOURCE_CACHE})
@@ -230,9 +207,6 @@ target_link_libraries(
     benchmarks
     PRIVATE simdrng xsimd benchmark::benchmark_main
 )
-if(SIMDRNG_ENABLE_CODSPEED)
-    target_compile_definitions(benchmarks PRIVATE SIMDRNG_CODSPEED=1)
-endif()
 
 if(SIMDRNG_MARCH_NATIVE)
     target_compile_options(benchmarks PRIVATE -march=native)
