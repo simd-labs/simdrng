@@ -90,7 +90,7 @@ jobs:
           PY
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.1.0
+        uses: pypa/cibuildwheel@v4.2.1
         env:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
@@ -115,7 +115,7 @@ jobs:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: actions/setup-python@v7
-        with: { python-version: "3.12" }
+        with: { python-version: "3.14" }
 
       - name: Stamp version + commit hash
         shell: bash

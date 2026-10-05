@@ -41,7 +41,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
       - name: Set up MATLAB
-        uses: matlab-actions/setup-matlab@v2
+        uses: matlab-actions/setup-matlab@v3
 
       # bindings-matlab sets SIMDRNG_BUILD_MATLAB=ON; with MATLAB (and no
       # mkoctfile) present, the MATLAB MEX backend is selected. The mwrap gateway

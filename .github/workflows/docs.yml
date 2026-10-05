@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
-        with: { python-version: "3.11" }
+        with: { python-version: "3.14" }
 
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y graphviz
@@ -35,7 +35,7 @@ jobs:
       # upstream binary (matches the version used for local validation) so the
       # C++ API parses cleanly and `-W` stays strict.
       - name: Install Doxygen
-        uses: ssciwr/doxygen-install@v2.0.2
+        uses: ssciwr/doxygen-install@v2.0.3
         with:
           version: "1.15.0"
 
