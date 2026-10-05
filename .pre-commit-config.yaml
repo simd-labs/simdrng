@@ -45,13 +45,13 @@ repos:
 
   # --- Shell ---
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.13.1-1
+    rev: v3.14.1-1
     hooks:
       - id: shfmt
 
   # --- Markdown ---
   - repo: https://github.com/DavidAnson/markdownlint-cli2
-    rev: v0.22.1
+    rev: v0.23.3
     hooks:
       - id: markdownlint-cli2
         args: ["--config", ".markdownlint.json"]
@@ -71,7 +71,7 @@ repos:
 
   # --- Python package validation ---
   - repo: https://github.com/abravalheri/validate-pyproject
-    rev: v0.25
+    rev: '0.26'
     hooks:
       - id: validate-pyproject
         additional_dependencies: ["validate-pyproject-schema-store[all]"]

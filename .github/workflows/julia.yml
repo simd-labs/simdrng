@@ -46,7 +46,7 @@ jobs:
           restore-keys: cpm-julia-${{ matrix.name }}-
 
       - name: Setup C++ toolchain
-        uses: aminya/setup-cpp@v1.8.1
+        uses: aminya/setup-cpp@v1.10.1
         with:
           compiler: ${{ matrix.compiler }}
           cmake: true

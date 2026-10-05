@@ -201,7 +201,7 @@ jobs:
         # commands and transitively include every simdrng header; .clang-tidy's
         # HeaderFilterRegex surfaces findings in include/simdrng + src. Informational
         # (no --warnings-as-errors): the hard gate is cppcheck below.
-        run: clang-tidy -p build/static-analysis $(git ls-files 'src/*.cpp')
+        run: git ls-files -z 'src/*.cpp' | xargs -0 clang-tidy -p build/static-analysis
       - name: cppcheck (headers)
         # Explicit file list: cppcheck's default extension set doesn't include
         # .hpp, so passing include/ alone makes it find nothing and exit 1. Fails

@@ -47,13 +47,13 @@ runs:
         } >> "$GITHUB_ENV"
 
     - name: Cache CPM dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ github.workspace }}/.cpm-cache
         key: ${{ inputs.cache-key-prefix }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'tests/CMakeLists.txt') }}
         restore-keys: ${{ inputs.cache-key-prefix }}-
 
-    - uses: mozilla-actions/sccache-action@v0.0.9
+    - uses: mozilla-actions/sccache-action@v0.0.11
 
     - name: Setup C++ toolchain
       uses: aminya/setup-cpp@v1
