@@ -35,9 +35,42 @@ from pathlib import Path
 DEFAULT_FILTER = r"(XoshiroSIMD|ChaChaSIMD|PhiloxSIMD|Native|gen_block|populate_cache|next_block|store_blocks)"
 
 VECTOR_REG = re.compile(r"%(xmm|ymm|zmm)\d+")
-# A vector move whose memory operand is stack-relative => spill/reload.
-SPILL = re.compile(r"\b(v?mov(?:aps|ups|dqa|dqu|apd|upd))\b.*[-0-9]*\(%r(?:sp|bp)\)")
+# A stack-slot memory operand, as the disassembler prints it.
+STACK_SLOT = re.compile(r"[-0-9]*\(%r(?:sp|bp)\)")
+# A raw instruction byte in the disassembly byte column.
+BYTE = re.compile(r"[0-9a-f]{2}")
+# shortcut: the disassembler reports no is-move flag, so a data move is read
+# from its own naming (x86 data motion is named mov*/vmov*). One prefix covers
+# vmovdqu32, vmovdqu64 and vmovq without a member list; drop it when a tool
+# answers "is this a move" directly.
+IS_MOVE_NAME = ("mov", "vmov")
 FUNC_LABEL = re.compile(r"^[0-9a-f]+ <(.+)>:\s*$")
+
+
+def insn_mnemonic(line: str) -> str | None:
+    """The mnemonic: first instruction-text token after the raw-byte tokens.
+
+    Works for both llvm-objdump and GNU objdump line layouts. No x86 mnemonic
+    is two hex digits, so a byte token is never mistaken for one.
+    """
+    _, sep, rest = line.partition(":")
+    if not sep:
+        return None
+    for token in rest.replace("\t", " ").split():
+        if not BYTE.fullmatch(token):
+            return token
+    return None
+
+
+def is_stack_move(line: str) -> bool:
+    """True for a data move between a vector register and a stack slot."""
+    mnemonic = insn_mnemonic(line)
+    return (
+        mnemonic is not None
+        and mnemonic.startswith(IS_MOVE_NAME)
+        and VECTOR_REG.search(line) is not None
+        and STACK_SLOT.search(line) is not None
+    )
 
 
 def find_objdump(compiler: str) -> str:
@@ -76,7 +109,7 @@ def audit_function(name: str, body: list[str]) -> dict:
     for line in body:
         for m in VECTOR_REG.finditer(line):
             widths[m.group(1)] += 1
-        if SPILL.search(line):
+        if is_stack_move(line):
             spills += 1
     width = "zmm" if widths["zmm"] else "ymm" if widths["ymm"] else "xmm" if widths["xmm"] else "scalar"
     # Only the hot block-fill path should be vector-wide. The cold one-shot
