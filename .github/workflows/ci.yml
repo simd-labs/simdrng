@@ -26,10 +26,10 @@ jobs:
       fail-fast: false
       matrix:
         compiler: [gcc, clang]
-        version: ["14", "20"]
+        version: ["14", "23"]
         isa: [native, sse2, avx2, avx512]
         exclude:
-          - { compiler: gcc, version: "20" }
+          - { compiler: gcc, version: "23" }
           - { compiler: clang, version: "14" }
         include:
           # Older compilers: single ISA to contain matrix cost.
@@ -100,7 +100,7 @@ jobs:
       matrix:
         include:
           - { compiler: gcc,   version: "14" }
-          - { compiler: clang, version: "20" }
+          - { compiler: clang, version: "23" }
     steps:
       - uses: actions/checkout@v7
 
