@@ -169,7 +169,7 @@ jobs:
       - name: Set up build
         uses: ./.github/actions/setup-build
         with:
-          compiler: clang-20
+          compiler: clang-23
           cache-key-prefix: cpm-san
       - run: cmake --preset sanitizers
       - run: cmake --build --preset sanitizers
@@ -187,7 +187,7 @@ jobs:
       - name: Set up build
         uses: ./.github/actions/setup-build
         with:
-          compiler: clang-20
+          compiler: clang-23
           cache-key-prefix: cpm-analysis
           analysis-tools: "true"
       - name: Configure + build (exports compile_commands.json)

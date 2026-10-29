@@ -15,7 +15,7 @@ jobs:
       - name: Set up build
         uses: ./.github/actions/setup-build
         with:
-          compiler: clang-20
+          compiler: clang-23
           cache-key-prefix: cpm-tsan
           libpfm4: "false"
       - name: Configure (TSan preset)

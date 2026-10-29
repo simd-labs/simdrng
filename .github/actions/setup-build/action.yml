@@ -11,7 +11,7 @@ description: >
 
 inputs:
   compiler:
-    description: Compiler passed to setup-cpp (e.g. gcc-14, clang-20, msvc, apple-clang).
+    description: Compiler passed to setup-cpp (e.g. gcc-14, clang-23, msvc, apple-clang).
     required: true
   cache-key-prefix:
     description: Prefix for the CPM source-cache key (e.g. cpm-ci, cpm-tsan).

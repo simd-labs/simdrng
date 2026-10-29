@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc-14, gcc-15, clang-19, clang-20]
+        compiler: [gcc-14, gcc-15, clang-23]
     steps:
       - uses: actions/checkout@v7
 
