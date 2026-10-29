@@ -2,8 +2,9 @@
 """Test tools/asm_audit.py on a real object file.
 
 Assembles a tiny object whose hot-named function spills through vmovdqu32,
-vmovdqu64 and vmovq stack stores, plus one folded-ALU stack read that must not
-count as a move. Then runs the real CLI on it and checks the reported spills.
+vmovdqu64 and movq stack stores. Three lines pin the spill rules: a folded-ALU
+stack read, a GPR stack store and a register-register vmovdqa must not count.
+Then runs the real CLI on it and checks the reported spills.
 
 Run: python3 tools/test_asm_audit.py
 """
@@ -23,24 +24,26 @@ ASM = """\
 XoshiroSIMD_spill_test:
         vmovdqu32 %ymm0, -32(%rbp)
         vmovdqu64 %ymm1, -64(%rbp)
-        vmovq    %xmm2, -72(%rbp)
+        movq     %xmm2, -72(%rbp)
+        mov      %eax, -8(%rbp)
+        vmovdqa  %ymm0, %ymm1
         vpxor    -80(%rbp), %ymm3, %ymm4
         ret
 """
 
 
-def find_toolchain() -> tuple[str | None, str | None]:
-    """Find llvm-mc and llvm-objdump of one shared version."""
+def find_toolchain() -> str | None:
+    """Find an llvm-mc that has a matching llvm-objdump on PATH."""
     suffixes = [f"-{v}" for v in ("23", "24", "22", "21", "20", "19", "18")] + [""]
     for suf in suffixes:
         mc, od = f"llvm-mc{suf}", f"llvm-objdump{suf}"
         if shutil.which(mc) and shutil.which(od):
-            return mc, od
-    return None, None
+            return mc
+    return None
 
 
 def main() -> int:
-    mc, _ = find_toolchain()
+    mc = find_toolchain()
     if mc is None:
         print("error: no llvm-mc/llvm-objdump pair on PATH", file=sys.stderr)
         return 1
@@ -81,7 +84,8 @@ def main() -> int:
     assert len(rows) == 1, rows
     row = rows[0]
     assert row["function"] == "XoshiroSIMD_spill_test", row
-    # vmovdqu32 + vmovdqu64 + vmovq stack stores, the vpxor folded read excluded.
+    # vmovdqu32 + vmovdqu64 + movq stack stores. The mov GPR store, the
+    # register-register vmovdqa and the folded vpxor read must not count.
     assert row["spills"] == 3, row
     assert row["width"] == "ymm", row
     assert not row["devectorised"], row

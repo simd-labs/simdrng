@@ -41,6 +41,12 @@ jobs:
             --md results/${{ matrix.compiler }}/asm_audit.md \
             --json results/${{ matrix.compiler }}/asm_audit.json
 
+      # Unit test for tools/asm_audit.py. Runs on the clang-23 entry only:
+      # setup-cpp's LLVM install already puts the llvm-23 tool pair on PATH.
+      - name: ASM audit unit test
+        if: matrix.compiler == 'clang-23'
+        run: python3 tools/test_asm_audit.py
+
       - name: Run benchmarks
         run: |
           mkdir -p results/${{ matrix.compiler }}

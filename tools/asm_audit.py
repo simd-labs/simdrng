@@ -36,7 +36,7 @@ DEFAULT_FILTER = r"(XoshiroSIMD|ChaChaSIMD|PhiloxSIMD|Native|gen_block|populate_
 
 VECTOR_REG = re.compile(r"%(xmm|ymm|zmm)\d+")
 # A stack-slot memory operand, as the disassembler prints it.
-STACK_SLOT = re.compile(r"[-0-9]*\(%r(?:sp|bp)\)")
+STACK_SLOT = re.compile(r"\(%r(?:sp|bp)\)")
 # A raw instruction byte in the disassembly byte column.
 BYTE = re.compile(r"[0-9a-f]{2}")
 # shortcut: the disassembler reports no is-move flag, so a data move is read
