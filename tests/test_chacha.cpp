@@ -57,3 +57,66 @@ TEST_CASE("ChaChaScalar", "[chacha]") {
     REQUIRE(std::memcmp(referenceOutput, chachaOutput.data(), 64) == 0);
   }
 }
+
+namespace {
+
+using ChaCha20 = simdrng::ChaCha<20>;
+
+constexpr simdrng::array<ChaCha20::matrix_word, 8> kStreamKey = {0x01020304, 0x05060708, 0x09101112, 0x13141516,
+                                                                 0x17181920, 0x21222324, 0x25262728, 0x29303132};
+
+} // namespace
+
+// stream() must be usable in constant expressions.
+static_assert(ChaCha20::stream(kStreamKey, 3)() != ChaCha20::stream(kStreamKey, 4)());
+
+TEST_CASE("ChaCha stream nonce word holds the stream index", "[chacha][stream]") {
+  for (const std::uint64_t i :
+       {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{2}, std::uint64_t{3}, std::uint64_t{4}, std::uint64_t{5},
+        std::uint64_t{6}, std::uint64_t{7}, std::uint64_t{8}, std::uint64_t{1} << 40}) {
+    INFO("i: " << i);
+    const auto st = ChaCha20::stream(kStreamKey, i).getState();
+    REQUIRE(st[12] == 0);
+    REQUIRE(st[13] == 0);
+    REQUIRE(st[14] == static_cast<std::uint32_t>(i));
+    REQUIRE(st[15] == static_cast<std::uint32_t>(i >> 32));
+  }
+}
+
+TEST_CASE("ChaCha stream draws only advance the counter", "[chacha][stream]") {
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{3}, std::uint64_t{1} << 40}) {
+    INFO("i: " << i);
+    auto s = ChaCha20::stream(kStreamKey, i);
+    for (int k = 0; k < 16; ++k) {
+      s();
+    }
+    // 16 outputs = 2 blocks: counter word 2, nonce words unchanged.
+    const auto st = s.getState();
+    REQUIRE(st[12] == 2);
+    REQUIRE(st[13] == 0);
+    REQUIRE(st[14] == static_cast<std::uint32_t>(i));
+    REQUIRE(st[15] == static_cast<std::uint32_t>(i >> 32));
+  }
+}
+
+TEST_CASE("ChaCha adjacent streams share no value", "[chacha][stream]") {
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 40}) {
+    INFO("i: " << i);
+    auto a = ChaCha20::stream(kStreamKey, i);
+    auto b = ChaCha20::stream(kStreamKey, i + 1);
+    std::array<std::uint64_t, 64> oa{}, ob{};
+    for (auto &v : oa) {
+      v = a();
+    }
+    for (auto &v : ob) {
+      v = b();
+    }
+    int shared = 0;
+    for (const auto xv : oa) {
+      for (const auto yv : ob) {
+        shared += (xv == yv);
+      }
+    }
+    REQUIRE(shared == 0);
+  }
+}

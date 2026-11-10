@@ -1,5 +1,6 @@
 #include <catch2/catch_all.hpp>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <simdrng/xoshiro_scalar.hpp>
 
@@ -114,5 +115,59 @@ TEST_CASE("xoshiro256++ jump(pow2) matches fixed jumps", "[xoshiro256++][jump_n]
     a.jump(simdrng::pow2{192});
     b.long_jump();
     REQUIRE(a.getState() == b.getState());
+  }
+}
+
+namespace {
+
+constexpr std::uint64_t kStreamSeed = 0x0102030405060708ULL;
+
+} // namespace
+
+// stream() must be usable in constant expressions.
+static_assert(simdrng::XoshiroScalar::stream(kStreamSeed, 0).getState() ==
+              simdrng::XoshiroScalar(kStreamSeed).getState());
+static_assert(simdrng::XoshiroScalar::min() == std::numeric_limits<simdrng::XoshiroScalar::result_type>::min());
+static_assert(simdrng::XoshiroScalar::max() == std::numeric_limits<simdrng::XoshiroScalar::result_type>::max());
+
+TEST_CASE("xoshiro256++ stream(seed, i) equals i jumps", "[xoshiro256++][stream]") {
+  for (std::uint64_t i = 0; i <= 8; ++i) {
+    INFO("i: " << i);
+    simdrng::XoshiroScalar by_jumps(kStreamSeed);
+    for (std::uint64_t j = 0; j < i; ++j) {
+      by_jumps.jump();
+    }
+    REQUIRE(simdrng::XoshiroScalar::stream(kStreamSeed, i).getState() == by_jumps.getState());
+  }
+}
+
+TEST_CASE("xoshiro256++ stream composition at large index", "[xoshiro256++][stream]") {
+  const std::uint64_t i = std::uint64_t{1} << 40;
+  simdrng::XoshiroScalar advanced = simdrng::XoshiroScalar::stream(kStreamSeed, i);
+  advanced.jump();
+  advanced.jump();
+  advanced.jump();
+  REQUIRE(simdrng::XoshiroScalar::stream(kStreamSeed, i + 3).getState() == advanced.getState());
+}
+
+TEST_CASE("xoshiro256++ adjacent streams share no value", "[xoshiro256++][stream]") {
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 40}) {
+    INFO("i: " << i);
+    auto a = simdrng::XoshiroScalar::stream(kStreamSeed, i);
+    auto b = simdrng::XoshiroScalar::stream(kStreamSeed, i + 1);
+    std::array<std::uint64_t, 64> oa{}, ob{};
+    for (auto &v : oa) {
+      v = a();
+    }
+    for (auto &v : ob) {
+      v = b();
+    }
+    int shared = 0;
+    for (const auto xv : oa) {
+      for (const auto yv : ob) {
+        shared += (xv == yv);
+      }
+    }
+    REQUIRE(shared == 0);
   }
 }

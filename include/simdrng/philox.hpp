@@ -83,36 +83,64 @@ public:
    * @brief Smallest value operator() can return.
    * @return 0.
    */
-  static constexpr SIMDRNG_ALWAYS_INLINE auto(min)() noexcept { return (std::numeric_limits<result_type>::min)(); }
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE auto(min)() noexcept {
+    return (std::numeric_limits<result_type>::min)();
+  }
 
   /**
    * @brief Largest value operator() can return.
    * @return 2^64 - 1.
    */
-  static constexpr SIMDRNG_ALWAYS_INLINE auto(max)() noexcept { return (std::numeric_limits<result_type>::max)(); }
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE auto(max)() noexcept {
+    return (std::numeric_limits<result_type>::max)();
+  }
 
   /**
    * @brief Constructs the generator from a 64-bit seed and starting counter.
    * @param seed Expanded into the Philox key via SplitMix.
    * @param counter Initial counter (stream position); defaults to 0.
    */
-  explicit SIMDRNG_ALWAYS_INLINE Philox(result_type seed, result_type counter = 0) noexcept
-      : m_counter(counter_from_uint64(counter)), m_key(seed_to_key(seed)) {}
+  SIMDRNG_HD explicit SIMDRNG_ALWAYS_INLINE constexpr Philox(result_type seed, result_type counter = 0) noexcept
+      : m_counter(simdrng_bit_cast<counter_state>(counter_from_uint64(counter))),
+        m_key(simdrng_bit_cast<key_state>(seed_to_key(seed))) {}
 
   /**
    * @brief Constructs the generator from an explicit key and counter block.
    * @param key The Philox key (N/2 words).
    * @param counter The full counter block (N words).
    */
-  explicit SIMDRNG_ALWAYS_INLINE Philox(const key_type &key, const counter_type &counter) noexcept
-      : m_counter(counter), m_key(key) {}
+  SIMDRNG_HD explicit SIMDRNG_ALWAYS_INLINE constexpr Philox(const key_type &key, const counter_type &counter) noexcept
+      : m_counter(simdrng_bit_cast<counter_state>(counter)), m_key(simdrng_bit_cast<key_state>(key)) {}
+
+  /**
+   * @brief Per-thread stream constructor. The stream index takes the top 64
+   * counter bits (the top 32 for Philox2x32) and the low words hold the
+   * per-thread position, so streams are disjoint by construction for a given
+   * seed. O(1).
+   * @param seed Expanded into the Philox key via SplitMix.
+   * @param stream_index The stream (thread) index.
+   */
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE Philox stream(result_type seed,
+                                                                  std::uint64_t stream_index) noexcept {
+    // Per-thread length: 2^(N*W-64) blocks * RESULTS_PER_BLOCK outputs;
+    // Philox2x32 has a 32-bit index half, so 2^32 blocks = 2^32 outputs.
+    counter_state ctr{};
+    if constexpr (W == 32 && N == 4) {
+      ctr[N - 2] = static_cast<word_type>(stream_index);
+      ctr[N - 1] = static_cast<word_type>(stream_index >> 32);
+    } else {
+      ctr[N - 1] = static_cast<word_type>(stream_index);
+    }
+    // shortcut: the Philox2x32 index half is 32 bits, so an index >= 2^32 wraps to i mod 2^32 and streams repeat.
+    return Philox{seed_to_key(seed), simdrng_bit_cast<counter_type>(ctr)};
+  }
 
   /**
    * @brief Returns the next 64-bit output, generating a fresh block when the
    * current one is exhausted.
    * @return The next 64-bit output.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr result_type operator()() noexcept {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr result_type operator()() noexcept {
     if (m_result_index >= RESULTS_PER_BLOCK) [[unlikely]] {
       m_result_cache = next_block();
       m_result_index = 0;
@@ -124,7 +152,7 @@ public:
    * @brief Generates a uniform random number in the range [0, 1).
    * @return A uniform random number.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr double uniform() noexcept {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr double uniform() noexcept {
     return static_cast<double>(operator()() >> 11) * 0x1.0p-53;
   }
 
@@ -132,27 +160,29 @@ public:
    * @brief Returns the counter of the block the most recent output came from.
    * @return The current counter block (decremented past the in-flight block).
    */
-  counter_type getCounter() const noexcept {
+  // std::array at the public boundary (as at 85cc841); the members hold the
+  // internal simdrng::array and convert by value (the two storages differ).
+  SIMDRNG_HD counter_type getCounter() const noexcept {
     if (m_result_index < RESULTS_PER_BLOCK) {
-      counter_type ctr = m_counter;
+      counter_state ctr = m_counter;
       dec_counter(ctr);
-      return ctr;
+      return simdrng_bit_cast<counter_type>(ctr);
     }
-    return m_counter;
+    return simdrng_bit_cast<counter_type>(m_counter);
   }
 
   /**
    * @brief Returns the Philox key.
    * @return The current key.
    */
-  const key_type &getKey() const noexcept { return m_key; }
+  SIMDRNG_HD key_type getKey() const noexcept { return simdrng_bit_cast<key_type>(m_key); }
 
   /**
    * @brief Sets the counter and forces a fresh block on the next output.
    * @param ctr The counter block to seek to.
    */
-  void setCounter(const counter_type &ctr) noexcept {
-    m_counter = ctr;
+  SIMDRNG_HD void setCounter(const counter_type &ctr) noexcept {
+    m_counter = simdrng_bit_cast<counter_state>(ctr);
     m_result_index = RESULTS_PER_BLOCK;
   }
 
@@ -160,8 +190,8 @@ public:
    * @brief Sets the key and forces a fresh block on the next output.
    * @param key The key to install.
    */
-  void setKey(const key_type &key) noexcept {
-    m_key = key;
+  SIMDRNG_HD void setKey(const key_type &key) noexcept {
+    m_key = simdrng_bit_cast<key_state>(key);
     m_result_index = RESULTS_PER_BLOCK;
   }
 
@@ -169,35 +199,39 @@ public:
    * @brief Returns the raw internal counter (for serialization).
    * @return The internal counter block, including the in-flight block.
    */
-  const counter_type &getCounterForSerde() const noexcept { return m_counter; }
+  SIMDRNG_HD counter_type getCounterForSerde() const noexcept { return simdrng_bit_cast<counter_type>(m_counter); }
 
   /**
    * @brief Restores both counter and key, forcing a fresh block next.
    * @param ctr The counter block.
    * @param key The key.
    */
-  void setState(const counter_type &ctr, const key_type &key) noexcept {
-    m_counter = ctr;
-    m_key = key;
+  SIMDRNG_HD void setState(const counter_type &ctr, const key_type &key) noexcept {
+    m_counter = simdrng_bit_cast<counter_state>(ctr);
+    m_key = simdrng_bit_cast<key_state>(key);
     m_result_index = RESULTS_PER_BLOCK;
   }
 
   /// @brief Returns the cached output block (for serialization).
-  const result_block_type &result_cache() const noexcept { return m_result_cache; }
+  SIMDRNG_HD result_block_type result_cache() const noexcept {
+    return simdrng_bit_cast<result_block_type>(m_result_cache);
+  }
   /// @brief Restores the cached output block (for serialization).
-  void set_result_cache(const result_block_type &cache) noexcept { m_result_cache = cache; }
+  SIMDRNG_HD void set_result_cache(const result_block_type &cache) noexcept {
+    m_result_cache = simdrng_bit_cast<cache_state>(cache);
+  }
   /// @brief Returns the index of the next output within the cached block.
-  std::uint8_t result_index() const noexcept { return m_result_index; }
+  SIMDRNG_HD std::uint8_t result_index() const noexcept { return m_result_index; }
   /// @brief Restores the index of the next output within the cached block.
-  void set_result_index(std::uint8_t idx) noexcept { m_result_index = idx; }
+  SIMDRNG_HD void set_result_index(std::uint8_t idx) noexcept { m_result_index = idx; }
 
   /**
    * @brief Expands a 64-bit seed into a Philox key via SplitMix.
    * @param seed The user seed.
    * @return The derived key.
    */
-  static constexpr key_type seed_to_key(result_type seed) noexcept {
-    key_type key{};
+  SIMDRNG_HD static constexpr key_type seed_to_key(result_type seed) noexcept {
+    key_state key{};
     auto state = seed;
     auto splitmix = [&state]() -> std::uint64_t {
       state += 0x9e3779b97f4a7c15ULL;
@@ -218,7 +252,7 @@ public:
         key[1] = static_cast<word_type>(splitmix());
       }
     }
-    return key;
+    return simdrng_bit_cast<key_type>(key);
   }
 
   /**
@@ -226,8 +260,8 @@ public:
    * @param counter The scalar counter value.
    * @return The counter block.
    */
-  static constexpr counter_type counter_from_uint64(result_type counter) noexcept {
-    counter_type ctr{};
+  SIMDRNG_HD static constexpr counter_type counter_from_uint64(result_type counter) noexcept {
+    counter_state ctr{};
     if constexpr (W == 32) {
       ctr[0] = static_cast<word_type>(counter & 0xFFFFFFFF);
       if constexpr (N >= 2) {
@@ -236,25 +270,32 @@ public:
     } else {
       ctr[0] = static_cast<word_type>(counter);
     }
-    return ctr;
+    return simdrng_bit_cast<counter_type>(ctr);
   }
 
 private:
   using C = internal::PhiloxConstants<N, W>;
+  // Internal state is the one device-safe array type; counter_type, key_type
+  // and result_block_type stay std::array at the public boundary (as at 85cc841).
+  using counter_state = simdrng::array<word_type, N>;
+  using key_state = simdrng::array<word_type, N / 2>;
+  using cache_state = simdrng::array<result_type, RESULTS_PER_BLOCK>;
 
-  counter_type m_counter;
-  key_type m_key;
-  result_block_type m_result_cache{};
+  counter_state m_counter;
+  key_state m_key;
+  cache_state m_result_cache{};
   std::uint8_t m_result_index = RESULTS_PER_BLOCK;
 
-  static constexpr SIMDRNG_ALWAYS_INLINE void mulhilo(word_type a, word_type b, word_type &hi, word_type &lo) noexcept {
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE void mulhilo(word_type a, word_type b, word_type &hi,
+                                                                 word_type &lo) noexcept {
     if constexpr (W == 32) {
       auto product = static_cast<std::uint64_t>(a) * static_cast<std::uint64_t>(b);
       lo = static_cast<word_type>(product);
       hi = static_cast<word_type>(product >> 32);
     } else {
 #if defined(__SIZEOF_INT128__)
-      auto product = static_cast<__uint128_t>(a) * static_cast<__uint128_t>(b);
+      __extension__ typedef unsigned __int128 u128;
+      auto product = static_cast<u128>(a) * static_cast<u128>(b);
       lo = static_cast<word_type>(product);
       hi = static_cast<word_type>(product >> 64);
 #else
@@ -272,52 +313,59 @@ private:
     }
   }
 
-  static constexpr SIMDRNG_ALWAYS_INLINE void single_round(counter_type &ctr, key_type &key) noexcept {
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE void single_round(counter_state &ctr, key_state &key) noexcept {
     // N/2 is a compile-time constant, so these loops fully unroll; they stay
     // constexpr and keep this scalar header free of any SIMD/poet dependency.
     constexpr std::uint8_t PAIRS = N / 2;
-    std::array<word_type, PAIRS> hi{};
-    std::array<word_type, PAIRS> lo{};
+    // shortcut: indexing the static constexpr C::MUL/PERM/BUMP with a runtime j
+    // takes the host object's address, which traps in device code; copy to
+    // constexpr locals first, upgrade when nvcc folds static member reads.
+    constexpr simdrng::array<word_type, PAIRS> MUL = simdrng_bit_cast<simdrng::array<word_type, PAIRS>>(C::MUL);
+    constexpr simdrng::array<std::uint8_t, PAIRS> PERM = simdrng_bit_cast<simdrng::array<std::uint8_t, PAIRS>>(C::PERM);
+    constexpr simdrng::array<word_type, PAIRS> BUMP = simdrng_bit_cast<simdrng::array<word_type, PAIRS>>(C::BUMP);
+    simdrng::array<word_type, PAIRS> hi{};
+    simdrng::array<word_type, PAIRS> lo{};
     for (std::uint8_t j = 0; j < PAIRS; ++j) {
-      mulhilo(C::MUL[j], ctr[2 * j], hi[j], lo[j]);
+      mulhilo(MUL[j], ctr[2 * j], hi[j], lo[j]);
     }
-    counter_type out{};
+    counter_state out{};
     for (std::uint8_t j = 0; j < PAIRS; ++j) {
-      const auto s = C::PERM[j];
+      const auto s = PERM[j];
       out[2 * j] = hi[s] ^ ctr[2 * j + 1] ^ key[j];
       out[2 * j + 1] = lo[s];
     }
     ctr = out;
     for (std::uint8_t j = 0; j < PAIRS; ++j) {
-      key[j] += C::BUMP[j];
+      key[j] += BUMP[j];
     }
   }
 
-  static constexpr SIMDRNG_ALWAYS_INLINE counter_type philox_rounds(counter_type ctr, key_type key) noexcept {
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE counter_state philox_rounds(counter_state ctr,
+                                                                                key_state key) noexcept {
     for (std::uint8_t i = 0; i < R; ++i) {
       single_round(ctr, key);
     }
     return ctr;
   }
 
-  constexpr SIMDRNG_ALWAYS_INLINE void inc_counter() noexcept {
+  SIMDRNG_HD constexpr SIMDRNG_ALWAYS_INLINE void inc_counter() noexcept {
     for (std::uint8_t i = 0; i < N; ++i) {
       if (++m_counter[i] != 0)
         break;
     }
   }
 
-  static constexpr SIMDRNG_ALWAYS_INLINE void dec_counter(counter_type &ctr) noexcept {
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE void dec_counter(counter_state &ctr) noexcept {
     for (std::uint8_t i = 0; i < N; ++i) {
       if (ctr[i]-- != 0)
         break;
     }
   }
 
-  SIMDRNG_FLATTEN constexpr SIMDRNG_ALWAYS_INLINE result_block_type next_block() noexcept {
+  SIMDRNG_HD SIMDRNG_FLATTEN constexpr SIMDRNG_ALWAYS_INLINE cache_state next_block() noexcept {
     auto output = philox_rounds(m_counter, m_key);
     inc_counter();
-    return std::bit_cast<result_block_type>(output);
+    return simdrng_bit_cast<cache_state>(output);
   }
 };
 

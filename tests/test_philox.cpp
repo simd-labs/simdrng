@@ -137,3 +137,136 @@ TEMPLATE_TEST_CASE("Philox deterministic sequence", "[philox]", simdrng::Philox4
     REQUIRE(a() == b());
   }
 }
+
+namespace {
+
+constexpr std::uint64_t kStreamSeed = 0x0102030405060708ULL;
+
+// The stream index fills the top 64 counter bits (words N-2..N-1 for W=32);
+// the low words are the per-thread position.
+simdrng::Philox4x32::counter_type expected_counter(std::uint64_t i) {
+  simdrng::Philox4x32::counter_type ctr{};
+  ctr[2] = static_cast<std::uint32_t>(i);
+  ctr[3] = static_cast<std::uint32_t>(i >> 32);
+  return ctr;
+}
+
+// The stream layout the stream tests check, for every Philox variant: the
+// index takes the top 64 counter bits (the top 32 for Philox2x32).
+template <class G> auto expected_stream_counter(std::uint64_t i) {
+  using counter_t = typename G::counter_type;
+  using word_t = typename G::word_type;
+  constexpr std::size_t n = counter_t{}.size();
+  counter_t ctr{};
+  if constexpr (n == 2 && sizeof(word_t) == 4) {
+    // Philox2x32: the index fills the top 32-bit word.
+    ctr[1] = static_cast<word_t>(i);
+  } else if (n == 4 && sizeof(word_t) == 4) {
+    // Philox4x32: the index fills the top 64 counter bits.
+    ctr[2] = static_cast<word_t>(i);
+    ctr[3] = static_cast<word_t>(i >> 32);
+  } else {
+    // Philox2x64 / Philox4x64: the index fills the top 64-bit word.
+    ctr[n - 1] = static_cast<word_t>(i);
+  }
+  return ctr;
+}
+
+} // namespace
+
+// stream() must be usable in constant expressions.
+static_assert(simdrng::Philox4x32::stream(kStreamSeed, 3)() != simdrng::Philox4x32::stream(kStreamSeed, 4)());
+
+TEST_CASE("Philox4x32 stream counter word holds the stream index", "[philox][stream]") {
+  for (const std::uint64_t i :
+       {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{2}, std::uint64_t{3}, std::uint64_t{4}, std::uint64_t{5},
+        std::uint64_t{6}, std::uint64_t{7}, std::uint64_t{8}, std::uint64_t{1} << 40}) {
+    INFO("i: " << i);
+    REQUIRE(simdrng::Philox4x32::stream(kStreamSeed, i).getCounter() == expected_counter(i));
+  }
+}
+
+TEST_CASE("Philox4x32 stream draws only advance the low counter words", "[philox][stream]") {
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{3}, std::uint64_t{1} << 40}) {
+    INFO("i: " << i);
+    auto s = simdrng::Philox4x32::stream(kStreamSeed, i);
+    for (int k = 0; k < 16; ++k) {
+      s();
+    }
+    // 16 outputs = 8 blocks: position 8 in the low word, index words unchanged.
+    auto expected = expected_counter(i);
+    expected[0] = 8;
+    REQUIRE(s.getCounterForSerde() == expected);
+  }
+}
+
+TEST_CASE("Philox4x32 adjacent streams share no value", "[philox][stream]") {
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 40}) {
+    INFO("i: " << i);
+    auto a = simdrng::Philox4x32::stream(kStreamSeed, i);
+    auto b = simdrng::Philox4x32::stream(kStreamSeed, i + 1);
+    std::array<std::uint64_t, 64> oa{}, ob{};
+    for (auto &v : oa) {
+      v = a();
+    }
+    for (auto &v : ob) {
+      v = b();
+    }
+    int shared = 0;
+    for (const auto xv : oa) {
+      for (const auto yv : ob) {
+        shared += (xv == yv);
+      }
+    }
+    REQUIRE(shared == 0);
+  }
+}
+
+TEMPLATE_TEST_CASE("Philox stream counter holds the index in the top counter half", "[philox][stream]",
+                   simdrng::Philox4x32, simdrng::Philox2x32, simdrng::Philox4x64, simdrng::Philox2x64) {
+  using G = TestType;
+  // counter bits / 2 = index bits, capped at the 64-bit stream index.
+  constexpr unsigned index_bits = std::min<unsigned>(static_cast<unsigned>(sizeof(typename G::counter_type) * 4), 64u);
+  const std::uint64_t max_index = (index_bits >= 64) ? ~std::uint64_t{0} : (std::uint64_t{1} << index_bits) - 1;
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 31, max_index}) {
+    INFO("i: " << i);
+    REQUIRE(G::stream(kStreamSeed, i).getCounter() == expected_stream_counter<G>(i));
+  }
+}
+
+TEMPLATE_TEST_CASE("Philox streams 0 and 1 share no value in their first 64 draws", "[philox][stream]",
+                   simdrng::Philox4x32, simdrng::Philox2x32, simdrng::Philox4x64, simdrng::Philox2x64) {
+  using G = TestType;
+  auto a = G::stream(kStreamSeed, 0);
+  auto b = G::stream(kStreamSeed, 1);
+  std::array<std::uint64_t, 64> oa{}, ob{};
+  for (auto &v : oa) {
+    v = a();
+  }
+  for (auto &v : ob) {
+    v = b();
+  }
+  int shared = 0;
+  for (const auto x : oa) {
+    for (const auto y : ob) {
+      shared += (x == y);
+    }
+  }
+  REQUIRE(shared == 0);
+}
+
+TEST_CASE("Philox2x32 stream 0 second draw differs from stream 1 first draw", "[philox][stream]") {
+  using G = simdrng::Philox2x32;
+  auto s0 = G::stream(kStreamSeed, 0);
+  s0();
+  const auto s0_second = s0();
+  const auto s1_first = G::stream(kStreamSeed, 1)();
+  REQUIRE(s0_second != s1_first);
+}
+
+TEST_CASE("Philox2x32 stream index wraps at 2^32", "[philox][stream]") {
+  // The index half is 32 bits, like SplitMix::stream: i >= 2^32 repeats a stream.
+  using G = simdrng::Philox2x32;
+  REQUIRE(G::stream(kStreamSeed, std::uint64_t{1} << 32).getCounter() == G::stream(kStreamSeed, 0).getCounter());
+  REQUIRE(G::stream(kStreamSeed, (std::uint64_t{1} << 32) + 5).getCounter() == G::stream(kStreamSeed, 5).getCounter());
+}

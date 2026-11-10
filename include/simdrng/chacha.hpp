@@ -39,13 +39,17 @@ public:
    * @brief Smallest value operator() can return.
    * @return 0.
    */
-  static constexpr SIMDRNG_ALWAYS_INLINE auto(min)() noexcept { return (std::numeric_limits<result_type>::min)(); }
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE auto(min)() noexcept {
+    return (std::numeric_limits<result_type>::min)();
+  }
 
   /**
    * @brief Largest value operator() can return.
    * @return 2^64 - 1.
    */
-  static constexpr SIMDRNG_ALWAYS_INLINE auto(max)() noexcept { return (std::numeric_limits<result_type>::max)(); }
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE auto(max)() noexcept {
+    return (std::numeric_limits<result_type>::max)();
+  }
 
   /**
    * @brief Construct a scalar ChaCha generator with given key, counter and nonce
@@ -53,8 +57,9 @@ public:
    * @param counter Initial value of the counter.
    * @param nonce Initial value of the nonce.
    */
-  SIMDRNG_ALWAYS_INLINE explicit ChaCha(const std::array<matrix_word, KEY_WORDCOUNT> &key, const input_word counter,
-                                        const input_word nonce) noexcept {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit ChaCha(const std::array<matrix_word, KEY_WORDCOUNT> &key,
+                                                             const input_word counter,
+                                                             const input_word nonce) noexcept {
     // First four words (i.e. top-row) are always the same constants
     // They spell out "expand 2-byte k" in ASCII (little-endian)
     m_state[0] = 0x61707865;
@@ -62,8 +67,9 @@ public:
     m_state[2] = 0x79622d32;
     m_state[3] = 0x6b206574;
 
+    const auto key_words = simdrng_bit_cast<simdrng::array<matrix_word, KEY_WORDCOUNT>>(key);
     for (auto i = 0; i < 8; ++i) {
-      m_state[4 + i] = key[i];
+      m_state[4 + i] = key_words[i];
     }
 
     // ChaCha assumes little-endianness
@@ -74,16 +80,29 @@ public:
   }
 
   /**
+   * @brief Per-thread stream constructor. The stream index becomes the nonce,
+   * so streams are disjoint by construction for a given key and each stream
+   * keeps the full counter range. O(1).
+   * @param key A 256-bit key, divided up into eight 32-bit words.
+   * @param stream_index The stream (thread) index.
+   */
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE static constexpr ChaCha stream(const simdrng::array<matrix_word, KEY_WORDCOUNT> &key,
+                                                                  const input_word stream_index) noexcept {
+    // Per-thread length: 2^64 blocks = 2^67 outputs; 2^64 disjoint streams.
+    return ChaCha{simdrng_bit_cast<std::array<matrix_word, KEY_WORDCOUNT>>(key), 0, stream_index};
+  }
+
+  /**
    * @brief Generates the next 64-bit output.
    * @return The next 64-bit output.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr result_type operator()() noexcept { return next_result(); }
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr result_type operator()() noexcept { return next_result(); }
 
   /**
    * @brief Generates a uniform random number in the range [0, 1).
    * @return A uniform random number.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr double uniform() noexcept {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr double uniform() noexcept {
     return static_cast<double>(operator()() >> 11) * 0x1.0p-53;
   }
 
@@ -91,41 +110,47 @@ public:
    * @brief Generates the next 64-byte ChaCha block.
    * @return The next 64-byte ChaCha block.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr matrix_type block() noexcept {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr matrix_type block() noexcept {
     if (m_result_index < m_result_cache.size()) {
       auto cached_block = results_to_block(m_result_cache);
       m_result_index = static_cast<std::uint8_t>(m_result_cache.size());
-      return cached_block;
+      return simdrng_bit_cast<matrix_type>(cached_block);
     }
-    return next_block();
+    return simdrng_bit_cast<matrix_type>(next_block());
   }
 
   /**
    * @brief Returns the state of the generator; a 4x4 matrix.
    * @return State of the generator.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr matrix_type getState() const noexcept {
-    matrix_type state = m_state;
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr matrix_type getState() const noexcept {
+    auto state = m_state;
     if (m_result_index < m_result_cache.size()) {
       const input_word counter = (static_cast<input_word>(state[13]) << 32) | static_cast<input_word>(state[12]);
       const input_word current_counter = counter - 1;
       state[12] = static_cast<matrix_word>(current_counter & 0xFFFFFFFF);
       state[13] = static_cast<matrix_word>(current_counter >> 32);
     }
-    return state;
+    return simdrng_bit_cast<matrix_type>(state);
   }
 
 private:
-  matrix_type m_state;
-  result_cache_type m_result_cache{};
+  // Internal state is the one device-safe array type; matrix_type and
+  // result_cache_type stay std::array at the public boundary (as at 85cc841).
+  using state_type = simdrng::array<matrix_word, MATRIX_WORDCOUNT>;
+  using cache_type = simdrng::array<result_type, MATRIX_WORDCOUNT / 2>;
+
+  state_type m_state;
+  cache_type m_result_cache{};
   std::uint8_t m_result_index = static_cast<std::uint8_t>(m_result_cache.size());
 
-  static constexpr SIMDRNG_ALWAYS_INLINE auto rotl(const matrix_word x, const int k) noexcept {
-    return std::rotl(x, k);
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE auto rotl(const matrix_word x, const int k) noexcept {
+    return simdrng::rotl(x, k);
   }
 
-  static constexpr SIMDRNG_ALWAYS_INLINE void quarter_round(matrix_type &m, const unsigned int a, const unsigned int b,
-                                                            const unsigned int c, const unsigned int d) noexcept {
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE void quarter_round(state_type &m, const unsigned int a,
+                                                                       const unsigned int b, const unsigned int c,
+                                                                       const unsigned int d) noexcept {
     m[a] += m[b];
     m[d] ^= m[a];
     m[d] = rotl(m[d], 16);
@@ -140,21 +165,21 @@ private:
     m[b] = rotl(m[b], 7);
   }
 
-  constexpr SIMDRNG_ALWAYS_INLINE void inc_counter() noexcept {
+  SIMDRNG_HD constexpr SIMDRNG_ALWAYS_INLINE void inc_counter() noexcept {
     if (++m_state[12] == 0) {
       ++m_state[13];
     }
   }
 
-  static constexpr SIMDRNG_ALWAYS_INLINE result_cache_type block_to_results(const matrix_type &block) noexcept {
-    return std::bit_cast<result_cache_type>(block);
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE cache_type block_to_results(const state_type &block) noexcept {
+    return simdrng_bit_cast<cache_type>(block);
   }
 
-  static constexpr SIMDRNG_ALWAYS_INLINE matrix_type results_to_block(const result_cache_type &results) noexcept {
-    return std::bit_cast<matrix_type>(results);
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE state_type results_to_block(const cache_type &results) noexcept {
+    return simdrng_bit_cast<state_type>(results);
   }
 
-  constexpr SIMDRNG_ALWAYS_INLINE result_type next_result() noexcept {
+  SIMDRNG_HD constexpr SIMDRNG_ALWAYS_INLINE result_type next_result() noexcept {
     if (m_result_index >= m_result_cache.size()) [[unlikely]] {
       m_result_cache = block_to_results(next_block());
       m_result_index = 0;
@@ -166,8 +191,8 @@ private:
    * @brief Returns the next output from the generator, then increases state's counter by 1.
    * @return The output for the current internal state.
    */
-  SIMDRNG_FLATTEN constexpr SIMDRNG_ALWAYS_INLINE matrix_type next_block() noexcept {
-    matrix_type x = m_state;
+  SIMDRNG_HD SIMDRNG_FLATTEN constexpr SIMDRNG_ALWAYS_INLINE state_type next_block() noexcept {
+    state_type x = m_state;
 
     // Note that we perform both an odd and even round at the same time.
     // As a result the amount of rounds performed is always rounded up to an even number.

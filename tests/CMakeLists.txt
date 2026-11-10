@@ -93,6 +93,8 @@ simdrng_fetch_reference(https://prng.di.unimi.it/splitmix64.c ${TEST_INCLUDE_DIR
 simdrng_fetch_reference(https://prng.di.unimi.it/xoshiro256plusplus.c ${TEST_INCLUDE_DIR}/xoshiro256plusplus.c)
 # xoshiro256plusplus.c #includes "f2x.c" (Vigna's F2[x] polynomial-jump reference).
 simdrng_fetch_reference(https://prng.di.unimi.it/f2x.c ${TEST_INCLUDE_DIR}/f2x.c)
+# Vigna's MWC64X/32 reference (multiply-with-carry, 32-bit output; testMWC64X32 oracle).
+simdrng_fetch_reference(https://prng.di.unimi.it/MWC64X_32.c ${TEST_INCLUDE_DIR}/MWC64X_32.c)
 
 # Use Monocypher for ChaCha20 (fetched via CPM)
 cpmaddpackage(
@@ -118,10 +120,54 @@ target_link_libraries(testSplitMix PRIVATE simdrng Catch2::Catch2WithMain)
 target_include_directories(testSplitMix SYSTEM PRIVATE ${TEST_INCLUDE_DIR})
 add_test(NAME testSplitMix COMMAND testSplitMix)
 
+add_executable(testBitHelpers test_bit_helpers.cpp)
+target_link_libraries(testBitHelpers PRIVATE simdrng Catch2::Catch2WithMain)
+target_include_directories(testBitHelpers SYSTEM PRIVATE ${TEST_INCLUDE_DIR})
+add_test(NAME testBitHelpers COMMAND testBitHelpers)
+
 add_executable(testXoshiro test_xoshiro.cpp)
 target_link_libraries(testXoshiro PRIVATE simdrng Catch2::Catch2WithMain)
 target_include_directories(testXoshiro SYSTEM PRIVATE ${TEST_INCLUDE_DIR})
 add_test(NAME testXoshiro COMMAND testXoshiro)
+
+add_executable(testMWC64X32 test_mwc64x32.cpp)
+target_link_libraries(testMWC64X32 PRIVATE simdrng Catch2::Catch2WithMain)
+target_include_directories(testMWC64X32 SYSTEM PRIVATE ${TEST_INCLUDE_DIR})
+add_test(NAME testMWC64X32 COMMAND testMWC64X32)
+
+# Same source, forced onto the no-__int128 u128 shim so the MSVC fallback
+# path is compiled and exercised on every host.
+add_executable(testMWC64X32Shim test_mwc64x32.cpp)
+target_compile_definitions(testMWC64X32Shim PRIVATE SIMDRNG_TEST_U128_SHIM)
+target_link_libraries(testMWC64X32Shim PRIVATE simdrng Catch2::Catch2WithMain)
+target_include_directories(testMWC64X32Shim SYSTEM PRIVATE ${TEST_INCLUDE_DIR})
+add_test(NAME testMWC64X32Shim COMMAND testMWC64X32Shim)
+add_executable(testMWC64X32Mulmod test_mwc64x32_mulmod.cpp)
+target_link_libraries(testMWC64X32Mulmod PRIVATE simdrng Catch2::Catch2WithMain)
+target_include_directories(
+    testMWC64X32Mulmod
+    SYSTEM
+    PRIVATE ${TEST_INCLUDE_DIR}
+)
+add_test(NAME testMWC64X32Mulmod COMMAND testMWC64X32Mulmod)
+
+# Same source, forced onto the no-__int128 u128 shim so the MSVC fallback
+# path is compiled and exercised on every host.
+add_executable(testMWC64X32MulmodShim test_mwc64x32_mulmod.cpp)
+target_compile_definitions(
+    testMWC64X32MulmodShim
+    PRIVATE SIMDRNG_TEST_U128_SHIM
+)
+target_link_libraries(
+    testMWC64X32MulmodShim
+    PRIVATE simdrng Catch2::Catch2WithMain
+)
+target_include_directories(
+    testMWC64X32MulmodShim
+    SYSTEM
+    PRIVATE ${TEST_INCLUDE_DIR}
+)
+add_test(NAME testMWC64X32MulmodShim COMMAND testMWC64X32MulmodShim)
 
 add_executable(testChaCha test_chacha.cpp)
 target_link_libraries(
@@ -143,9 +189,19 @@ target_link_libraries(
 )
 add_test(NAME testThreadSafety COMMAND testThreadSafety)
 
+# CUDA device test: scalar generator output on device equals host output.
+if(SIMDRNG_CUDA)
+    add_executable(test_cuda test_cuda.cu)
+    target_link_libraries(test_cuda PRIVATE simdrng Catch2::Catch2WithMain)
+    add_test(NAME test_cuda COMMAND test_cuda)
+endif()
+
 set(SIMDRNG_SCALAR_TEST_TARGETS
     testSplitMix
+    testBitHelpers
     testXoshiro
+    testMWC64X32
+    testMWC64X32Mulmod
     testChaCha
     testPhilox
     testThreadSafety

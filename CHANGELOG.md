@@ -10,6 +10,14 @@ Pre-1.0, the public API may change between minor versions.
 
 ### Added
 
+- MWC64X/32: a new scalar generator (`MWC64X32` in `simdrng/mwc64x32.hpp`),
+  ported from Vigna's MWC64X_32.c (public domain). 32-bit output, period about
+  2^63, one 64-bit multiply per step, meant for register-scarce environments
+  (e.g. GPUs). Seeded from a 64-bit seed via SplitMix64 (`c = 1`, `x` = the low
+  32 bits of the first output). Offers `jump()` (2^32 steps), `long_jump()`
+  (2^48 steps) and `jump(n)` for arbitrary offsets; the jump arithmetic is
+  portable 64-bit modular multiplication (no `__int128`), so the header
+  compiles for MSVC and CUDA device code.
 - xoshiro256: arbitrary and power-of-two jump-ahead. `jump(n)` advances the state
   by exactly `n` calls to the generator (computing `x^n mod P(x)` on the fly via
   square-and-multiply in `GF(2)[x]`), addressing any stream offset in `[0, 2^64)`.
@@ -18,6 +26,22 @@ Pre-1.0, the public API may change between minor versions.
   equals `jump()`. Both are available on `XoshiroScalar`, `XoshiroNative`, the
   dispatched `XoshiroSIMD`, and the Python bindings (`pow2` is exported there).
   The fixed `jump()`/`mid_jump()`/`long_jump()` strides are unchanged.
+- Per-thread stream constructors for the scalar generators (`SplitMix::stream`,
+  `XoshiroScalar::stream`, `MWC64X32::stream`, `Philox::stream`, `ChaCha::stream`):
+  a `SIMDRNG_HD constexpr` factory `(seed, stream index)` that starts thread i at
+  a disjoint stream in O(log i) (xoshiro: i × 2^128 jump, MWC: i × 2^32 jump,
+  SplitMix: i × 2^32 Weyl steps, Philox: index in the top counter bits, ChaCha:
+  index as the nonce), on host and CUDA device.
+- CUDA device support for the five scalar generators (`SplitMix`, `XoshiroScalar`,
+  `ChaCha`, `Philox`, `MWC64X32`): `macros.hpp` defines `SIMDRNG_HD`
+  (`__host__ __device__` under nvcc/hipcc, empty otherwise) and every scalar
+  member carries it, so the classes run in CUDA kernels; the `SIMDRNG_CUDA`
+  CMake option (default `OFF`) enables the CUDA language and builds
+  `tests/test_cuda.cu`, which requires device output to equal host output.
+  `macros.hpp` has `simdrng::array`, a device-safe array type, and `simdrng::rotl`,
+  a constexpr left-rotate function for unsigned types. In nvcc, `simdrng_bit_cast`
+  uses the CCCL `std::bit_cast`. The headers compile in device code without
+  `--expt-relaxed-constexpr`.
 
 ### Removed
 
@@ -36,6 +60,14 @@ Pre-1.0, the public API may change between minor versions.
 - poet is now integrated via `add_subdirectory` (its `add_subdirectory` bug is
   fixed upstream); xsimd is pinned to release `14.3.0` (de-forked to
   `xtensor-stack/xsimd`).
+- `XoshiroScalar::getState()`, `Philox::getKey()`, `Philox::getCounterForSerde()`, and `Philox::result_cache()` return a copy of the `std::array`, not a `const` reference. Code that keeps the reference or takes its address must store the value.
+
+### Fixed
+
+- `Philox` wrong output on CUDA devices: `single_round` indexed the static
+  `constexpr` round-constant arrays with a runtime loop variable, which device
+  code must not do because it takes the host object's address; the constants
+  are now copied to `constexpr` locals first.
 
 ## [0.0.1]
 

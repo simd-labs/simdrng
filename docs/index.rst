@@ -74,6 +74,10 @@ non-overlapping streams per thread and per node (via xoshiro's ``jump()`` /
 ``long_jump()``); Philox instead derives each work item's sub-stream from
 ``(seed, counter)`` with no coordination. See the per-family **Guides** below.
 
+The `GPU streams <https://github.com/DiamonDinoia/simdrng/blob/main/readme.md#gpu-streams>`_
+readme section has the CUDA device code, the per-thread
+``stream(seed, index)`` factory, and the multi-node recipe.
+
 Next reads
 ----------
 

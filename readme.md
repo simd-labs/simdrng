@@ -107,6 +107,86 @@ sub-stream from `(seed, counter)` with no coordination — see
 For the threaded example, see
 [`examples/cpp/threaded_openmp.cpp`](examples/cpp/threaded_openmp.cpp).
 
+## GPU streams
+
+All scalar generators compile in CUDA device code: SplitMix, XoshiroScalar,
+MWC64X32, Philox and ChaCha. The headers compile without
+`--expt-relaxed-constexpr`. `macros.hpp` marks all scalar members
+`__host__ __device__`. `macros.hpp` has `simdrng::array`, a
+host-and-device array type, and `simdrng_bit_cast`. In nvcc,
+`simdrng_bit_cast` uses the CCCL `std::bit_cast`.
+
+### CUDA test
+
+Install the CUDA toolkit first. `SIMDRNG_CUDA` is OFF by default. Set it to
+ON to make the CUDA device test:
+
+```sh
+cmake -S . -B build -DSIMDRNG_CUDA=ON
+cmake --build build
+ctest --test-dir build -R test_cuda
+```
+
+CMake sets `CMAKE_CUDA_ARCHITECTURES` to the host GPU. Set a value to change
+the target. `test_cuda` runs the check on the GPU: device output equals
+host output for all scalar classes, including `stream()`.
+
+### Per-thread streams
+
+Each scalar class has a `constexpr` function `stream(seed, i)`. Each thread
+owns a disjoint stream. XoshiroScalar and MWC64X32 make the state in
+O(log i) steps. The other three use O(1).
+
+| Generator       | Start offset for index i        | Values in one stream | Max streams |
+|-----------------|---------------------------------|----------------------|-------------|
+| `SplitMix`      | state = seed + i × 2^32 × gamma | 2^32                 | 2^32        |
+| `XoshiroScalar` | i × 2^128 outputs               | 2^128                | 2^128       |
+| `MWC64X32`      | i × 2^32 outputs                | 2^32                 | 2^31        |
+| `Philox4x32`    | i in the top 64 counter bits    | 2^64 blocks = 2^65   | 2^64        |
+| `ChaCha`        | i as the nonce                  | 2^64 blocks = 2^67   | 2^64        |
+
+`Philox2x32` puts the index in the top 32 counter bits. Its stream is 2^32
+blocks (2^32 values). An index of 2^32 or more wraps to the stream of
+i mod 2^32.
+
+The kernel uses one stream for each thread:
+
+```cpp
+#include <simdrng/xoshiro_scalar.hpp>
+#include <cuda_runtime.h>
+
+__global__ void fill(std::uint64_t seed, std::uint64_t *out) {
+  const auto tid = static_cast<std::uint64_t>(blockIdx.x * blockDim.x + threadIdx.x);
+  auto g = simdrng::XoshiroScalar::stream(seed, tid);
+  out[tid] = g();
+}
+```
+
+### Multi-node streams
+
+Each process jumps the seed by its process id with `long_jump()`. Each thread
+then gets its stream from the process base. The (seed, thread_id, cluster_id)
+constructor of `XoshiroScalar` does the long jumps and the thread jumps:
+
+```cpp
+simdrng::XoshiroScalar rng{42, omp_get_thread_num(), MPI_rank};
+```
+
+`long_jump()` equals 2^192 calls to `next()`. It gives 2^64 process bases,
+and each base gives 2^64 threads of 2^128 values. For MWC64X32, the base
+uses at most 2^15 `long_jump()` calls. Each thread calls `jump(t * 2^32)` on
+the base, with at most 2^16 threads of 2^32 values.
+
+### Limits
+
+Vigna sets a limit on the overlap of random streams
+(<https://prng.di.unimi.it/#period>). For period P, n streams of length L
+starting at random points overlap with probability at most n^2 * L / P.
+MWC64X32 holds a 64-bit state with a period of about 2^63, and Vigna calls
+such a state space too small for parallel use. It fits register-scarce
+hardware such as GPUs. For bulk CPU fill, use XoshiroSIMD. Its SIMD batches
+are faster than the scalar loop.
+
 ## Install
 
 ```sh

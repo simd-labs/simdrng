@@ -114,8 +114,7 @@ template <class Arch> struct XoshiroState {
    * share the same polynomial (same jump count). Shared by every jump variant.
    */
   SIMDRNG_ALWAYS_INLINE constexpr void jump_poly(const result_type *SIMDRNG_RESTRICT poly) noexcept {
-    static_assert(std::tuple_size_v<detail::jump_poly_t> == RNG_WIDTH,
-                  "jump polynomial word count must match the state width");
+    static_assert(detail::jump_poly_t::size() == RNG_WIDTH, "jump polynomial word count must match the state width");
     simd_type s0(0);
     simd_type s1(0);
     simd_type s2(0);

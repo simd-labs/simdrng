@@ -41,6 +41,90 @@
 #define SIMDRNG_NEVER_INLINE
 #endif
 
+// Host+device callable marker for the scalar generator headers; empty where no
+// device compiler is in play. HIP reuses it unchanged.
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#define SIMDRNG_HD __host__ __device__
+#else
+#define SIMDRNG_HD
+#endif
+
+// Device-safe spellings for std:: constexpr pieces. Under nvcc a constexpr
+// __host__ function called from device code compiles to a silent trap, so the
+// device paths must use the CCCL equivalents (shipped with the CUDA toolkit).
+#include <array>
+#include <bit>
+#include <cstddef>
+#include <type_traits>
+#if defined(__CUDACC__) && defined(__CUDACC_VER_MAJOR__)
+#include <cuda/std/bit>
+#endif
+// A function template, not a macro: template arguments carry commas.
+template <class To, class From> SIMDRNG_HD constexpr To simdrng_bit_cast(const From &v) noexcept {
+#if defined(__CUDACC__) && defined(__CUDACC_VER_MAJOR__)
+  return ::cuda::std::bit_cast<To>(v);
+#else
+  return ::std::bit_cast<To>(v);
+#endif
+}
+
+namespace simdrng {
+/**
+ * @brief Rotates the bits of an unsigned integer to the left.
+ * @tparam T Unsigned integer type.
+ * @param x The value to rotate.
+ * @param k The number of bits to rotate left.
+ * @return The rotated value. Defined for all @p k; the count is taken modulo
+ *         the bit width.
+ */
+template <class T> SIMDRNG_HD constexpr T rotl(T x, int k) noexcept {
+  static_assert(std::is_unsigned_v<T>, "rotl requires unsigned integral type");
+  constexpr int width = static_cast<int>(sizeof(T) * 8);
+  k &= (width - 1);
+  return (x << k) | (x >> ((width - k) & (width - 1)));
+}
+} // namespace simdrng
+
+// One array type for every translation unit, nvcc or host. std::array's
+// constexpr members are host-only under strict nvcc (a runtime call traps),
+// and a cuda::std::array alias mangles as a different type than std::array,
+// which is an ODR hazard in mixed nvcc/host builds. Layout matches
+// std::array<T, N>, so simdrng_bit_cast converts at std::array boundaries.
+namespace simdrng {
+template <class T, std::size_t N> struct array {
+  using value_type = T;
+  using size_type = std::size_t;
+  using reference = T &;
+  using const_reference = const T &;
+  using pointer = T *;
+  using const_pointer = const T *;
+  using iterator = T *;
+  using const_iterator = const T *;
+
+  T m_data[N];
+
+  SIMDRNG_HD constexpr reference operator[](size_type i) noexcept { return m_data[i]; }
+  SIMDRNG_HD constexpr const_reference operator[](size_type i) const noexcept { return m_data[i]; }
+  SIMDRNG_HD static constexpr size_type size() noexcept { return N; }
+  SIMDRNG_HD constexpr pointer data() noexcept { return m_data; }
+  SIMDRNG_HD constexpr const_pointer data() const noexcept { return m_data; }
+  SIMDRNG_HD constexpr iterator begin() noexcept { return m_data; }
+  SIMDRNG_HD constexpr const_iterator begin() const noexcept { return m_data; }
+  SIMDRNG_HD constexpr iterator end() noexcept { return m_data + N; }
+  SIMDRNG_HD constexpr const_iterator end() const noexcept { return m_data + N; }
+};
+
+template <class T, std::size_t N>
+SIMDRNG_HD constexpr bool operator==(const array<T, N> &a, const array<T, N> &b) noexcept {
+  for (std::size_t i = 0; i < N; ++i) {
+    if (!(a[i] == b[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+} // namespace simdrng
+
 // simdrng ships as a STATIC library (and header-only public API). The per-arch
 // dispatch-functor instantiations and the out-of-line XoshiroSIMD ctor need
 // external linkage so the explicit instantiations resolve at static-link time,

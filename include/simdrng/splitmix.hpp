@@ -21,7 +21,6 @@ Ported to C++ by Marco Barbone. Original implementation by Guy Steele.
 #pragma once
 
 #include <cstdint>
-#include <limits>
 
 #include "macros.hpp"
 
@@ -43,14 +42,27 @@ public:
    * @brief Constructs the generator from a 64-bit seed state.
    * @param state The initial 64-bit state.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr explicit SplitMix(const std::uint64_t state) noexcept : m_state(state) {}
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit SplitMix(const std::uint64_t state) noexcept : m_state(state) {}
+
+  /**
+   * @brief Per-thread stream constructor. Thread @p stream_index owns the 2^32
+   * consecutive values starting at output stream_index * 2^32 + 1 of the seed
+   * stream (state = seed + i * 2^32 * gamma). O(1).
+   * @param state The initial 64-bit seed state.
+   * @param stream_index The stream (thread) index.
+   */
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE static constexpr SplitMix stream(const std::uint64_t state,
+                                                                    const std::uint64_t stream_index) noexcept {
+    // Streams are distinct for stream_index < 2^32 (the Weyl orbit is 2^64 long).
+    return SplitMix{state + (stream_index << 32) * GAMMA};
+  }
 
   /**
    * @brief Advances the state and returns the next 64-bit value.
    * @return The next 64-bit output.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr std::uint64_t operator()() noexcept {
-    std::uint64_t z = (m_state += 0x9e3779b97f4a7c15);
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr std::uint64_t operator()() noexcept {
+    std::uint64_t z = (m_state += GAMMA);
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
     z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
     return z ^ (z >> 31);
@@ -60,31 +72,32 @@ public:
    * @brief Smallest value operator() can return.
    * @return 0.
    */
-  static constexpr SIMDRNG_ALWAYS_INLINE std::uint64_t(min)() noexcept {
-    return std::numeric_limits<std::uint64_t>::lowest();
-  }
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE std::uint64_t(min)() noexcept { return std::uint64_t{0}; }
 
   /**
    * @brief Largest value operator() can return.
    * @return 2^64 - 1.
    */
-  static constexpr SIMDRNG_ALWAYS_INLINE std::uint64_t(max)() noexcept {
-    return std::numeric_limits<std::uint64_t>::max();
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE std::uint64_t(max)() noexcept {
+    return static_cast<std::uint64_t>(~std::uint64_t{0});
   }
 
   /**
    * @brief Returns the current 64-bit state.
    * @return The current state.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr std::uint64_t getState() const noexcept { return m_state; }
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr std::uint64_t getState() const noexcept { return m_state; }
 
   /**
    * @brief Restores the state, e.g. when resuming a saved stream.
    * @param state The state to restore.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr void setState(std::uint64_t state) noexcept { m_state = state; }
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr void setState(std::uint64_t state) noexcept { m_state = state; }
 
 private:
+  /// The golden-ratio increment of the Weyl sequence.
+  static constexpr std::uint64_t GAMMA = 0x9e3779b97f4a7c15;
+
   std::uint64_t m_state;
 };
 

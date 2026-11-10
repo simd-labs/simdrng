@@ -71,6 +71,11 @@ option(
     "Enable development tooling (CPM, warnings helpers, coverage, analysis)"
     OFF
 )
+option(
+    SIMDRNG_CUDA
+    "Build the CUDA device test (tests/test_cuda.cu); needs the CUDA toolkit"
+    OFF
+)
 
 # The C ABI (capi.cpp) wraps the runtime-dispatched SIMD types directly
 # (XoshiroSIMD, ChaChaSIMD, PhiloxSIMD), whose per-ISA symbols only exist when
@@ -188,6 +193,19 @@ endforeach()
 
 if(NOT SUPPORTED_CXX_STANDARD)
     message(FATAL_ERROR "The compiler does not support C++17 or higher.")
+endif()
+
+# CUDA device support: CMAKE_CUDA_STANDARD is the repo's public interface
+# standard (cxx_std_20 below); nvcc caps at C++23, so the internal probe tier
+# cannot apply here. Default to the build host's GPU when the user does not
+# pin CMAKE_CUDA_ARCHITECTURES.
+if(SIMDRNG_CUDA)
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES native)
+    endif()
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 20)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 endif()
 
 # ---------------------------------------------------------------------------

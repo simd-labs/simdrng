@@ -7,6 +7,7 @@
 
 #include "chacha.hpp"
 #include "macros.hpp"
+#include "mwc64x32.hpp"
 #include "philox.hpp"
 #include "splitmix.hpp"
 #include "xoshiro_scalar.hpp"

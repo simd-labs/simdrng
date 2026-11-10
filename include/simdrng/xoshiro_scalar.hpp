@@ -24,8 +24,8 @@ Vigna.
 
 #include <array>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
-#include <limits>
 
 #include "macros.hpp"
 #include "splitmix.hpp"
@@ -37,7 +37,7 @@ namespace simdrng {
 namespace detail {
 
 /// 4×u64 jump polynomial: bit i (LSB-first) = coefficient of x^i.
-using jump_poly_t = std::array<std::uint64_t, 4>;
+using jump_poly_t = simdrng::array<std::uint64_t, 4>;
 
 /// Low 256 coefficients of the degree-256 characteristic polynomial P(x) of the
 /// xoshiro256 linear core (the x^256 term is implicit). Identical for ++/** —
@@ -49,7 +49,7 @@ inline constexpr jump_poly_t CHARPOLY = {0x9d116f2bb0f0f001, 0x0280002bcefd1a5e,
 /// Multiply a degree-<256 polynomial by x modulo P(x), in place: shift the
 /// 256-bit value left by one bit across the 4 little-endian words; if the
 /// x^256 term appears, reduce by XOR-ing CHARPOLY (since x^256 ≡ P(x) - x^256).
-constexpr void poly_mul_x_mod(jump_poly_t &p) noexcept {
+SIMDRNG_HD constexpr void poly_mul_x_mod(jump_poly_t &p) noexcept {
   const std::uint64_t carry = p[3] >> 63;
   p[3] = (p[3] << 1) | (p[2] >> 63);
   p[2] = (p[2] << 1) | (p[1] >> 63);
@@ -65,7 +65,7 @@ constexpr void poly_mul_x_mod(jump_poly_t &p) noexcept {
 
 /// Multiply two degree-<256 polynomials modulo P(x). Horner over a's bits from
 /// x^255 down to x^0: ×x then conditional XOR of b.
-constexpr jump_poly_t polymul_mod(const jump_poly_t &a, const jump_poly_t &b) noexcept {
+SIMDRNG_HD constexpr jump_poly_t polymul_mod(const jump_poly_t &a, const jump_poly_t &b) noexcept {
   jump_poly_t r{};
   for (int w = 3; w >= 0; --w) {
     for (int bit = 63; bit >= 0; --bit) {
@@ -83,7 +83,7 @@ constexpr jump_poly_t polymul_mod(const jump_poly_t &a, const jump_poly_t &b) no
 
 /// Jump polynomial for an arbitrary count: x^n mod P(x) via square-and-multiply
 /// in GF(2)[x]. Pure integer code ⇒ usable in constant expressions.
-constexpr jump_poly_t jump_poly_n(std::uint64_t n) noexcept {
+SIMDRNG_HD constexpr jump_poly_t jump_poly_n(std::uint64_t n) noexcept {
   jump_poly_t result = {1, 0, 0, 0}; // x^0
   jump_poly_t base = {2, 0, 0, 0};   // x^1
   while (n != 0) {
@@ -103,13 +103,36 @@ constexpr jump_poly_t jump_poly_n(std::uint64_t n) noexcept {
 /// ord_2(2^256-1) = 256, so strides repeat with period 256 in e — every
 /// distinct power-of-two stride is e in [0, 255]; larger e is redundant and
 /// would loop e times, so it is rejected rather than silently spun on.
-constexpr jump_poly_t jump_poly_pow2(std::uint64_t e) noexcept {
+SIMDRNG_HD constexpr jump_poly_t jump_poly_pow2(std::uint64_t e) noexcept {
   assert(e < 256 && "pow2 jump exponent must be < 256 (larger strides repeat)");
   jump_poly_t p = {2, 0, 0, 0}; // x = x^(2^0)
   for (std::uint64_t i = 0; i < e; ++i) {
     p = polymul_mod(p, p);
   }
   return p;
+}
+
+/// base^n mod P(x) by square-and-multiply in GF(2)[x].
+SIMDRNG_HD constexpr jump_poly_t polypow_mod(const jump_poly_t &base, std::uint64_t n) noexcept {
+  jump_poly_t result = {1, 0, 0, 0}; // x^0
+  jump_poly_t b = base;
+  while (n != 0) {
+    if ((n & 1U) != 0U) {
+      result = polymul_mod(result, b);
+    }
+    n >>= 1;
+    if (n != 0) {
+      b = polymul_mod(b, b);
+    }
+  }
+  return result;
+}
+
+/// The fixed jump() stride as a polynomial: x^(2^128) mod P(x), the published
+/// xoshiro256++ jump constants. Returned by value so device code never takes
+/// the address of a namespace-scope object.
+SIMDRNG_HD constexpr jump_poly_t poly_2_128() noexcept {
+  return {0x180ec6d33cfd0aba, 0xd5a61266f0c9392c, 0xa9582618e03fc9aa, 0x39abdc4529b1661c};
 }
 
 } // namespace detail
@@ -128,14 +151,16 @@ struct pow2 {
 class XoshiroScalar {
 public:
   using result_type = std::uint64_t;
-  static constexpr SIMDRNG_ALWAYS_INLINE auto(min)() noexcept { return std::numeric_limits<result_type>::min(); }
-  static constexpr SIMDRNG_ALWAYS_INLINE auto(max)() noexcept { return std::numeric_limits<result_type>::max(); }
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE auto(min)() noexcept { return result_type{0}; }
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE auto(max)() noexcept {
+    return static_cast<result_type>(~result_type{0});
+  }
 
   /**
    * @brief Constructs the XoshiroScalar generator with a given seed.
    * @param seed The seed value.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr explicit XoshiroScalar(const result_type seed) noexcept : m_state{} {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit XoshiroScalar(const result_type seed) noexcept : m_state{} {
     SplitMix splitmix{seed};
     for (auto &element : m_state) {
       element = splitmix();
@@ -147,7 +172,8 @@ public:
    * @param seed The seed value.
    * @param thread_id The thread ID.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr explicit XoshiroScalar(const result_type seed, const result_type thread_id) noexcept
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit XoshiroScalar(const result_type seed,
+                                                                    const result_type thread_id) noexcept
       : XoshiroScalar(seed) {
     for (result_type i = 0; i < thread_id; ++i) {
       jump();
@@ -160,8 +186,8 @@ public:
    * @param thread_id The thread ID.
    * @param cluster_id The cluster ID.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr explicit XoshiroScalar(const result_type seed, const result_type thread_id,
-                                                         const result_type cluster_id) noexcept
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit XoshiroScalar(const result_type seed, const result_type thread_id,
+                                                                    const result_type cluster_id) noexcept
       : XoshiroScalar(seed, thread_id) {
     for (result_type i = 0; i < cluster_id; ++i) {
       long_jump();
@@ -169,43 +195,64 @@ public:
   }
 
   /**
+   * @brief Per-thread stream constructor. Thread @p stream_index starts at the
+   * base state jumped by stream_index * 2^128 outputs, computed in
+   * O(log stream_index) as (x^(2^128))^stream_index mod P(x). Streams are
+   * disjoint: each holds 2^128 values and there are 2^128 streams.
+   * @param seed The seed value.
+   * @param stream_index The stream (thread) index.
+   */
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE XoshiroScalar stream(const result_type seed,
+                                                                         const std::uint64_t stream_index) noexcept {
+    XoshiroScalar g{seed};
+    g.apply_jump_poly(detail::polypow_mod(detail::poly_2_128(), stream_index));
+    return g;
+  }
+
+  /**
    * @brief Generates the next random number.
    * @return The next random number.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr result_type operator()() noexcept { return next(); }
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr result_type operator()() noexcept { return next(); }
 
   /**
    * @brief Generates a uniform random number in the range [0, 1).
    * @return A uniform random number.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr double(uniform)() noexcept { return static_cast<double>(next() >> 11) * 0x1.0p-53; }
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr double(uniform)() noexcept {
+    return static_cast<double>(next() >> 11) * 0x1.0p-53;
+  }
 
   /**
    * @brief Returns the state of the generator.
    * @return The state of the generator.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr const std::array<result_type, 4> &getState() const noexcept { return m_state; }
-  SIMDRNG_ALWAYS_INLINE constexpr void setState(const std::array<result_type, 4> &state) noexcept { m_state = state; }
+  // std::array at the public boundary (as at 85cc841); m_state is the internal
+  // simdrng::array, converted by value since the two storages differ.
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr std::array<result_type, 4> getState() const noexcept {
+    return simdrng_bit_cast<std::array<result_type, 4>>(m_state);
+  }
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr void setState(const std::array<result_type, 4> &state) noexcept {
+    m_state = simdrng_bit_cast<simdrng::array<result_type, 4>>(state);
+  }
 
   /**
    * @brief Returns the size of the state array.
    * @return The size of the state array.
    */
-  static constexpr SIMDRNG_ALWAYS_INLINE result_type stateSize() noexcept { return 4; }
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE result_type stateSize() noexcept { return 4; }
 
   /**
    * @brief Jump function for the generator. It is equivalent to 2^128 calls to next().
    * It can be used to generate 2^128 non-overlapping subsequences for simd computations.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr void jump() noexcept {
-    apply_jump_poly({0x180ec6d33cfd0aba, 0xd5a61266f0c9392c, 0xa9582618e03fc9aa, 0x39abdc4529b1661c});
-  }
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr void jump() noexcept { apply_jump_poly(detail::poly_2_128()); }
 
   /**
    * @brief Jump function for the generator. It is equivalent to 2^160 calls to next().
    * It can be used to generate 2^96 non-overlapping subsequences for parallel computations.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr void mid_jump() noexcept {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr void mid_jump() noexcept {
     apply_jump_poly({0xc04b4f9c5d26c200, 0x69e6e6e431a2d40b, 0x4823b45b89dc689c, 0xf567382197055bf0});
   }
 
@@ -214,7 +261,7 @@ public:
    * It can be used to generate 2^64 starting points, from each of which jump() will generate 2^64 non-overlapping
    * subsequences for parallel distributed computations.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr void long_jump() noexcept {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr void long_jump() noexcept {
     apply_jump_poly({0x76e15d3efefdcbbf, 0xc5004e441c522fb3, 0x77710069854ee241, 0x39109bb02acbe635});
   }
 
@@ -224,23 +271,27 @@ public:
    * Overload of jump(); the no-argument jump() remains the fixed 2^128 stride.
    * @param n The number of steps to jump ahead.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr void jump(std::uint64_t n) noexcept { apply_jump_poly(detail::jump_poly_n(n)); }
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr void jump(std::uint64_t n) noexcept {
+    apply_jump_poly(detail::jump_poly_n(n));
+  }
 
   /**
    * @brief Power-of-two jump-ahead: advances the state by exactly 2^p.exponent calls to next().
    * Reaches strides too large for the uint64 step count (e.g. jump(pow2{128}) == jump()).
    * @param p The exponent (as a pow2 tag) of the 2^e stride.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr void jump(pow2 p) noexcept { apply_jump_poly(detail::jump_poly_pow2(p.exponent)); }
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr void jump(pow2 p) noexcept {
+    apply_jump_poly(detail::jump_poly_pow2(p.exponent));
+  }
 
 private:
-  std::array<result_type, 4> m_state;
+  simdrng::array<result_type, 4> m_state;
 
   /**
    * @brief Applies a jump polynomial to the state: sets the state to poly(T) · state, where T is the
    * linear transition. Shared by all jump variants — they differ only in how the polynomial is obtained.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr void apply_jump_poly(const detail::jump_poly_t &poly) noexcept {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr void apply_jump_poly(const detail::jump_poly_t &poly) noexcept {
     result_type s0 = 0;
     result_type s1 = 0;
     result_type s2 = 0;
@@ -267,15 +318,15 @@ private:
    * @param k The number of bits to rotate.
    * @return The rotated integer.
    */
-  static constexpr SIMDRNG_ALWAYS_INLINE auto rotl(const result_type x, const int k) noexcept {
-    return std::rotl(x, k);
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE auto rotl(const result_type x, const int k) noexcept {
+    return simdrng::rotl(x, k);
   }
 
   /**
    * @brief Generates the next state of the generator.
    * @return The next state.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr result_type next() noexcept {
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr result_type next() noexcept {
     const auto result = rotl(m_state[0] + m_state[3], 23) + m_state[0];
     const auto t_shift = m_state[1] << 17;
 

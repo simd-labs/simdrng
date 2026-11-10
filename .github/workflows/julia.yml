@@ -28,7 +28,8 @@ jobs:
         include:
           - { name: linux-x86_64,   runs-on: ubuntu-24.04,     compiler: gcc }
           - { name: linux-aarch64,  runs-on: ubuntu-24.04-arm, compiler: gcc }
-          - { name: macos-arm64,    runs-on: macos-14,         compiler: apple-clang }
+          - { name: macos-arm64-15, runs-on: macos-15,         compiler: apple-clang }
+          - { name: macos-arm64-26, runs-on: macos-26,         compiler: apple-clang }
           - { name: windows-x64,    runs-on: windows-2022,     compiler: msvc }
     env:
       CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
