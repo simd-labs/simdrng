@@ -29,6 +29,7 @@ MACRO_EXPANSION        = YES
 EXPAND_ONLY_PREDEF     = YES
 PREDEFINED             = SIMDRNG_ALWAYS_INLINE= \
                          SIMDRNG_ALWAYS_INLINE_LAMBDA= \
+                         SIMDRNG_HD= \
                          SIMDRNG_FLATTEN= \
                          SIMDRNG_RESTRICT= \
                          SIMDRNG_NEVER_INLINE= \
