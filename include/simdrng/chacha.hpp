@@ -2,10 +2,12 @@
 
 #include <array>
 #include <bit>
+#include <cassert>
 #include <cstdint>
 #include <limits>
 
 #include "macros.hpp"
+#include "stream_levels.hpp"
 
 namespace simdrng {
 
@@ -80,16 +82,60 @@ public:
   }
 
   /**
-   * @brief Per-thread stream constructor. The stream index becomes the nonce,
-   * so streams are disjoint by construction for a given key and each stream
-   * keeps the full counter range. O(1).
+   * @brief Level constructor: ChaCha(key, counter, nonce, levels...) equals
+   * ChaCha{key, counter, nonce}.stream(levels...).
    * @param key A 256-bit key, divided up into eight 32-bit words.
-   * @param stream_index The stream (thread) index.
+   * @param counter Initial value of the counter.
+   * @param nonce Initial value of the nonce.
+   * @param levels Any subset of {node, gpu, thread}, each at most once.
    */
-  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE static constexpr ChaCha stream(const simdrng::array<matrix_word, KEY_WORDCOUNT> &key,
-                                                                  const input_word stream_index) noexcept {
-    // Per-thread length: 2^64 blocks = 2^67 outputs; 2^64 disjoint streams.
-    return ChaCha{simdrng_bit_cast<std::array<matrix_word, KEY_WORDCOUNT>>(key), 0, stream_index};
+  template <typename... Levels>
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit ChaCha(const std::array<matrix_word, KEY_WORDCOUNT> &key,
+                                                             const input_word counter, const input_word nonce,
+                                                             Levels... levels) noexcept
+      : ChaCha(ChaCha{key, counter, nonce}.stream(levels...)) {}
+
+  /**
+   * @brief Hierarchical stream selection. gpu takes the high nonce half and
+   * thread the low nonce half (32 bits each, debug assert on overflow), so
+   * streams are disjoint by construction for a given key and every stream
+   * keeps the full 64-bit counter range. node{n} XORs a SplitMix expansion of
+   * n into the eight key words (node{0} is the identity). O(R).
+   * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
+   * @return The generator for the addressed stream.
+   */
+  template <typename... Levels>
+    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr ChaCha stream(Levels... levels) const noexcept {
+    ChaCha g = *this;
+    if constexpr (detail::has_level_v<node, Levels...>) {
+      const std::uint64_t n = detail::pick_level<node>(levels...).value;
+      if (n != 0) {
+        std::uint64_t z = n;
+        for (auto i = 0; i < KEY_WORDCOUNT; ++i) {
+          z = detail::mix64(z);
+          g.m_state[4 + i] ^= static_cast<matrix_word>(z);
+        }
+        // The key changed and the cache position moved into a new stream:
+        // drop any cached block so the next draw comes from the new key.
+        g.m_result_index = static_cast<std::uint8_t>(g.m_result_cache.size());
+      }
+    }
+    std::uint64_t gpu_v = 0;
+    std::uint64_t thread_v = 0;
+    if constexpr (detail::has_level_v<gpu, Levels...>) {
+      gpu_v = detail::pick_level<gpu>(levels...).value;
+    }
+    if constexpr (detail::has_level_v<thread, Levels...>) {
+      thread_v = detail::pick_level<thread>(levels...).value;
+    }
+    assert(gpu_v < (std::uint64_t{1} << 32) && "gpu value overflows its nonce half");
+    assert(thread_v < (std::uint64_t{1} << 32) && "thread value overflows its nonce half");
+    g.m_state[14] = static_cast<matrix_word>(thread_v);
+    g.m_state[15] = static_cast<matrix_word>(gpu_v);
+    g.m_result_index = static_cast<std::uint8_t>(g.m_result_cache.size());
+    return g;
   }
 
   /**

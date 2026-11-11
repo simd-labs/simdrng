@@ -56,10 +56,10 @@ template <class Arch> struct XoshiroState {
   alignas(simd_type::arch_type::alignment()) std::array<simd_type, RNG_WIDTH> s{};
 
   /**
-   * Seed the SIMD state from a scalar seed, with optional thread and cluster offsets.
+   * Seed the SIMD state from a scalar seed. Lane i is the base state after
+   * i jumps of 2^128 outputs, so the lanes hold disjoint streams.
    */
-  SIMDRNG_ALWAYS_INLINE constexpr void seed(result_type seed_val, result_type thread_id = 0,
-                                            result_type cluster_id = 0) noexcept {
+  SIMDRNG_ALWAYS_INLINE constexpr void seed(result_type seed_val) noexcept {
     XoshiroScalar rng{seed_val};
     std::array<std::array<result_type, SIMD_WIDTH>, RNG_WIDTH> states{};
     for (auto i = 0UL; i < SIMD_WIDTH; ++i) {
@@ -69,12 +69,6 @@ template <class Arch> struct XoshiroState {
       rng.jump();
     }
     poet::static_for<0, RNG_WIDTH>([&](auto I) { s[I] = simd_type::load_unaligned(states[I].data()); });
-    for (result_type i = 0; i < thread_id; ++i) {
-      mid_jump();
-    }
-    for (result_type i = 0; i < cluster_id; ++i) {
-      long_jump();
-    }
   }
 
   SIMDRNG_ALWAYS_INLINE constexpr simd_type next() noexcept {
@@ -221,7 +215,7 @@ struct XoshiroSIMDInitResult {
  */
 struct XoshiroSIMDInitFunctor {
   void *state_storage;
-  std::uint64_t seed, thread_id, cluster_id;
+  std::uint64_t seed;
 
   template <class Arch> XoshiroSIMDInitResult operator()(Arch /*arch*/) const noexcept;
 };
@@ -231,7 +225,7 @@ template <class Arch> XoshiroSIMDInitResult XoshiroSIMDInitFunctor::operator()(A
   static_assert(sizeof(State) <= 256, "XoshiroState exceeds StateStorage capacity");
   static_assert(alignof(State) <= 64, "XoshiroState exceeds StateStorage alignment");
   auto *state = std::construct_at(static_cast<State *>(state_storage));
-  state->seed(seed, thread_id, cluster_id);
+  state->seed(seed);
   return {
       +[](void *SIMDRNG_RESTRICT s, std::array<std::uint64_t, 256> &SIMDRNG_RESTRICT cache) noexcept {
         static_cast<State *>(s)->populate_cache(cache);
@@ -286,13 +280,6 @@ public:
   static constexpr SIMDRNG_ALWAYS_INLINE auto stateSize() noexcept { return State::RNG_WIDTH; }
 
   SIMDRNG_ALWAYS_INLINE explicit XoshiroNative(const result_type seed) noexcept { m_state.seed(seed); }
-  SIMDRNG_ALWAYS_INLINE explicit XoshiroNative(const result_type seed, const result_type thread_id) noexcept {
-    m_state.seed(seed, thread_id);
-  }
-  SIMDRNG_ALWAYS_INLINE explicit XoshiroNative(const result_type seed, const result_type thread_id,
-                                               const result_type cluster_id) noexcept {
-    m_state.seed(seed, thread_id, cluster_id);
-  }
 
   SIMDRNG_ALWAYS_INLINE result_type operator()() noexcept {
     if (m_index == 0) [[unlikely]] {
@@ -378,7 +365,7 @@ public:
     return (std::numeric_limits<result_type>::max)();
   }
 
-  SIMDRNG_LOCAL explicit XoshiroSIMD(result_type seed, result_type thread_id = 0, result_type cluster_id = 0) noexcept;
+  SIMDRNG_LOCAL explicit XoshiroSIMD(result_type seed) noexcept;
 
   SIMDRNG_ALWAYS_INLINE result_type operator()() noexcept {
     if (m_index == 0) [[unlikely]] {

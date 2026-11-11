@@ -1,10 +1,10 @@
 // Thread-safety smoke test, used as the ThreadSanitizer target.
 //
 // simdrng generators carry no shared mutable state: each thread constructs its
-// own generator, and the (seed, thread_id) constructor places each thread on a
-// jump-separated, non-overlapping subsequence. This test runs many such
-// generators concurrently to prove there is no data race (under TSan) and that
-// the per-thread streams are distinct and deterministic.
+// own generator, and thread mid_jumps place each thread on a non-overlapping
+// subsequence. This test runs many such generators concurrently to prove there
+// is no data race (under TSan) and that the per-thread streams are distinct
+// and deterministic.
 
 #include <array>
 #include <cstdint>
@@ -26,9 +26,14 @@ TEST_CASE("per-thread Xoshiro streams are race-free and independent", "[thread]"
 
   for (int t = 0; t < kThreads; ++t) {
     pool.emplace_back([&out, t] {
-      // Each thread seeds its own generator on a distinct jumped subsequence
-      // and writes only into its own (disjoint) output vector.
-      simdrng::Xoshiro rng(42u, static_cast<std::uint64_t>(t));
+      // Each thread seeds its own generator on a distinct mid-jumped
+      // subsequence and writes only into its own (disjoint) output vector.
+      // The SIMD lanes already consume the jump spacing, so a thread takes a
+      // mid_jump (the level API covers only the five scalar generators).
+      simdrng::Xoshiro rng(42u);
+      for (int j = 0; j < t; ++j) {
+        rng.mid_jump();
+      }
       auto &dst = out[static_cast<std::size_t>(t)];
       dst.resize(kDraws);
       for (int i = 0; i < kDraws; ++i) {
@@ -47,7 +52,7 @@ TEST_CASE("per-thread Xoshiro streams are race-free and independent", "[thread]"
   }
 
   // Determinism: re-running thread 0's recipe reproduces its stream exactly.
-  simdrng::Xoshiro replay(42u, 0u);
+  simdrng::Xoshiro replay(42u);
   for (int i = 0; i < kDraws; ++i) {
     REQUIRE(replay() == out[0][static_cast<std::size_t>(i)]);
   }

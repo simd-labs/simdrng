@@ -4,6 +4,8 @@
 #include <random>
 #include <simdrng/xoshiro_scalar.hpp>
 
+#include "stream_levels_contract.hpp"
+
 #include "xoshiro256plusplus.c"
 
 static constexpr auto tests = 1 << 15;
@@ -125,36 +127,49 @@ constexpr std::uint64_t kStreamSeed = 0x0102030405060708ULL;
 } // namespace
 
 // stream() must be usable in constant expressions.
-static_assert(simdrng::XoshiroScalar::stream(kStreamSeed, 0).getState() ==
+static_assert(simdrng::XoshiroScalar{kStreamSeed}.stream().getState() ==
               simdrng::XoshiroScalar(kStreamSeed).getState());
+static_assert(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{3})() !=
+              simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{4})());
 static_assert(simdrng::XoshiroScalar::min() == std::numeric_limits<simdrng::XoshiroScalar::result_type>::min());
 static_assert(simdrng::XoshiroScalar::max() == std::numeric_limits<simdrng::XoshiroScalar::result_type>::max());
 
-TEST_CASE("xoshiro256++ stream(seed, i) equals i jumps", "[xoshiro256++][stream]") {
+TEST_CASE("xoshiro256++ stream thread{i} equals i jumps", "[xoshiro256++][stream]") {
   for (std::uint64_t i = 0; i <= 8; ++i) {
     INFO("i: " << i);
     simdrng::XoshiroScalar by_jumps(kStreamSeed);
     for (std::uint64_t j = 0; j < i; ++j) {
       by_jumps.jump();
     }
-    REQUIRE(simdrng::XoshiroScalar::stream(kStreamSeed, i).getState() == by_jumps.getState());
+    REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i}).getState() == by_jumps.getState());
   }
 }
 
-TEST_CASE("xoshiro256++ stream composition at large index", "[xoshiro256++][stream]") {
-  const std::uint64_t i = std::uint64_t{1} << 40;
-  simdrng::XoshiroScalar advanced = simdrng::XoshiroScalar::stream(kStreamSeed, i);
-  advanced.jump();
-  advanced.jump();
-  advanced.jump();
-  REQUIRE(simdrng::XoshiroScalar::stream(kStreamSeed, i + 3).getState() == advanced.getState());
+TEST_CASE("xoshiro256++ stream gpu{i} equals i long jumps", "[xoshiro256++][stream]") {
+  for (std::uint64_t i = 0; i <= 3; ++i) {
+    INFO("i: " << i);
+    simdrng::XoshiroScalar by_jumps(kStreamSeed);
+    for (std::uint64_t j = 0; j < i; ++j) {
+      by_jumps.long_jump();
+    }
+    REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::gpu{i}).getState() == by_jumps.getState());
+  }
 }
 
-TEST_CASE("xoshiro256++ adjacent streams share no value", "[xoshiro256++][stream]") {
+TEST_CASE("xoshiro256++ stream composition at large thread level", "[xoshiro256++][stream]") {
+  const std::uint64_t i = std::uint64_t{1} << 40;
+  simdrng::XoshiroScalar advanced = simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i});
+  advanced.jump();
+  advanced.jump();
+  advanced.jump();
+  REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i + 3}).getState() == advanced.getState());
+}
+
+TEST_CASE("xoshiro256++ adjacent thread streams share no value", "[xoshiro256++][stream]") {
   for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 40}) {
     INFO("i: " << i);
-    auto a = simdrng::XoshiroScalar::stream(kStreamSeed, i);
-    auto b = simdrng::XoshiroScalar::stream(kStreamSeed, i + 1);
+    auto a = simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i});
+    auto b = simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i + 1});
     std::array<std::uint64_t, 64> oa{}, ob{};
     for (auto &v : oa) {
       v = a();
@@ -170,4 +185,9 @@ TEST_CASE("xoshiro256++ adjacent streams share no value", "[xoshiro256++][stream
     }
     REQUIRE(shared == 0);
   }
+}
+
+TEST_CASE("xoshiro256++ stream level contract", "[xoshiro256++][stream]") {
+  stream_level_contract::check_stream_levels<simdrng::XoshiroScalar>(
+      [](auto... levels) { return simdrng::XoshiroScalar{kStreamSeed}.stream(levels...); });
 }

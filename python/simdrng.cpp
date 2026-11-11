@@ -405,16 +405,50 @@ NB_MODULE(simdrng_ext, m) {
   using PyXoshiro = PyBitGenerator<simdrng::XoshiroScalar>;
   auto xo = nb::class_<PyXoshiro>(m, "_Xoshiro")
                 .def(nb::init<uint64_t>(), "seed"_a)
-                .def(nb::init<uint64_t, uint64_t>(), "seed"_a, "thread"_a)
-                .def(nb::init<uint64_t, uint64_t, uint64_t>(), "seed"_a, "thread"_a, "cluster"_a);
+                // thread/cluster map onto the stream levels: thread -> jump, cluster -> long_jump.
+                .def(
+                    "__init__",
+                    [](PyXoshiro *self, std::uint64_t seed, std::uint64_t thread) {
+                      new (self) PyXoshiro(seed);
+                      self->rng = self->rng.stream(simdrng::thread{thread});
+                    },
+                    "seed"_a, "thread"_a)
+                .def(
+                    "__init__",
+                    [](PyXoshiro *self, std::uint64_t seed, std::uint64_t thread, std::uint64_t cluster) {
+                      new (self) PyXoshiro(seed);
+                      self->rng = self->rng.stream(simdrng::gpu{cluster}, simdrng::thread{thread});
+                    },
+                    "seed"_a, "thread"_a, "cluster"_a);
   register_base<simdrng::XoshiroScalar>(xo);
   register_jump<simdrng::XoshiroScalar>(xo);
 
   using PyXoshiroSIMD = PyBitGenerator<simdrng::XoshiroSIMD>;
   auto xs = nb::class_<PyXoshiroSIMD>(m, "_XoshiroSIMD")
                 .def(nb::init<uint64_t>(), "seed"_a)
-                .def(nb::init<uint64_t, uint64_t>(), "seed"_a, "thread"_a)
-                .def(nb::init<uint64_t, uint64_t, uint64_t>(), "seed"_a, "thread"_a, "cluster"_a);
+                // SIMD lanes already consume the jump spacing, so a thread takes a
+                // mid_jump and a cluster a long_jump, as before the level API.
+                .def(
+                    "__init__",
+                    [](PyXoshiroSIMD *self, std::uint64_t seed, std::uint64_t thread) {
+                      new (self) PyXoshiroSIMD(seed);
+                      for (std::uint64_t i = 0; i < thread; ++i) {
+                        self->rng.mid_jump();
+                      }
+                    },
+                    "seed"_a, "thread"_a)
+                .def(
+                    "__init__",
+                    [](PyXoshiroSIMD *self, std::uint64_t seed, std::uint64_t thread, std::uint64_t cluster) {
+                      new (self) PyXoshiroSIMD(seed);
+                      for (std::uint64_t i = 0; i < thread; ++i) {
+                        self->rng.mid_jump();
+                      }
+                      for (std::uint64_t i = 0; i < cluster; ++i) {
+                        self->rng.long_jump();
+                      }
+                    },
+                    "seed"_a, "thread"_a, "cluster"_a);
   register_base<simdrng::XoshiroSIMD>(xs);
   register_jump<simdrng::XoshiroSIMD>(xs);
 
@@ -422,8 +456,27 @@ NB_MODULE(simdrng_ext, m) {
   using PyXoshiroNative = PyBitGenerator<simdrng::XoshiroNative>;
   auto xn = nb::class_<PyXoshiroNative>(m, "_XoshiroNative")
                 .def(nb::init<uint64_t>(), "seed"_a)
-                .def(nb::init<uint64_t, uint64_t>(), "seed"_a, "thread"_a)
-                .def(nb::init<uint64_t, uint64_t, uint64_t>(), "seed"_a, "thread"_a, "cluster"_a);
+                .def(
+                    "__init__",
+                    [](PyXoshiroNative *self, std::uint64_t seed, std::uint64_t thread) {
+                      new (self) PyXoshiroNative(seed);
+                      for (std::uint64_t i = 0; i < thread; ++i) {
+                        self->rng.mid_jump();
+                      }
+                    },
+                    "seed"_a, "thread"_a)
+                .def(
+                    "__init__",
+                    [](PyXoshiroNative *self, std::uint64_t seed, std::uint64_t thread, std::uint64_t cluster) {
+                      new (self) PyXoshiroNative(seed);
+                      for (std::uint64_t i = 0; i < thread; ++i) {
+                        self->rng.mid_jump();
+                      }
+                      for (std::uint64_t i = 0; i < cluster; ++i) {
+                        self->rng.long_jump();
+                      }
+                    },
+                    "seed"_a, "thread"_a, "cluster"_a);
   register_base<simdrng::XoshiroNative>(xn);
   register_jump<simdrng::XoshiroNative>(xn);
 #endif

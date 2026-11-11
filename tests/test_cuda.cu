@@ -134,8 +134,7 @@ using kernel_fn = void (*)(std::uint64_t, std::uint64_t *, double *);
 void check_equal(kernel_fn kernel, seq_fn seq, std::uint64_t seed) {
   std::uint64_t *dev_out = nullptr;
   double *dev_unif = nullptr;
-  REQUIRE(cudaMalloc(&dev_out, static_cast<std::size_t>(kThreads) * kOut * sizeof(std::uint64_t)) ==
-          cudaSuccess);
+  REQUIRE(cudaMalloc(&dev_out, static_cast<std::size_t>(kThreads) * kOut * sizeof(std::uint64_t)) == cudaSuccess);
   REQUIRE(cudaMalloc(&dev_unif, static_cast<std::size_t>(kThreads) * sizeof(double)) == cudaSuccess);
 
   kernel<<<1, kThreads>>>(seed, dev_out, dev_unif);
@@ -166,33 +165,38 @@ void check_equal(kernel_fn kernel, seq_fn seq, std::uint64_t seed) {
   CHECK(bad == 0);
 }
 
-// Per-thread streams: 4096 threads, each builds stream(seed, gid) and draws 8 values.
+// Hierarchical streams: 4096 threads, each builds Gen{seed}.stream(levels...)
+// from its gid (node = gid & 3, gpu = gid >> 8, thread = gid & 0xFF) and draws
+// 8 values. The host runs the same sseq functions, so bit equality covers the
+// host/device parity of the level paths. SplitMix and MWC64X32 reject node.
 constexpr int kStreamThreads = 4096;
 constexpr int kStreamDraws = 8;
 
 SIMDRNG_HD void sseq_splitmix(std::uint64_t seed, std::uint64_t gid, std::uint64_t *out) {
-  auto g = simdrng::SplitMix::stream(seed, gid);
+  auto g = simdrng::SplitMix{seed}.stream(simdrng::gpu{gid >> 8}, simdrng::thread{gid & 0xFF});
   for (int k = 0; k < kStreamDraws; ++k) {
     out[k] = g();
   }
 }
 
 SIMDRNG_HD void sseq_xoshiro(std::uint64_t seed, std::uint64_t gid, std::uint64_t *out) {
-  auto g = simdrng::XoshiroScalar::stream(seed, gid);
+  auto g = simdrng::XoshiroScalar{seed}.stream(simdrng::node{gid & 3}, simdrng::gpu{gid >> 10},
+                                               simdrng::thread{gid & 0x3FF});
   for (int k = 0; k < kStreamDraws; ++k) {
     out[k] = g();
   }
 }
 
 SIMDRNG_HD void sseq_mwc(std::uint64_t seed, std::uint64_t gid, std::uint64_t *out) {
-  auto g = simdrng::MWC64X32::stream(seed, gid);
+  auto g = simdrng::MWC64X32{seed}.stream(simdrng::gpu{gid >> 8}, simdrng::thread{gid & 0xFF});
   for (int k = 0; k < kStreamDraws; ++k) {
     out[k] = g();
   }
 }
 
 SIMDRNG_HD void sseq_philox(std::uint64_t seed, std::uint64_t gid, std::uint64_t *out) {
-  auto g = simdrng::Philox<>::stream(seed, gid);
+  // Reverse argument order on purpose: order must not change the stream.
+  auto g = simdrng::Philox<>{seed}.stream(simdrng::thread{gid & 0xFF}, simdrng::gpu{gid >> 8}, simdrng::node{gid & 3});
   for (int k = 0; k < kStreamDraws; ++k) {
     out[k] = g();
   }
@@ -201,14 +205,16 @@ SIMDRNG_HD void sseq_philox(std::uint64_t seed, std::uint64_t gid, std::uint64_t
 // The stream F3 broke: Philox2x32 gives one output per block and its index
 // used to fill the whole counter.
 SIMDRNG_HD void sseq_philox2x32(std::uint64_t seed, std::uint64_t gid, std::uint64_t *out) {
-  auto g = simdrng::Philox2x32::stream(seed, gid);
+  auto g =
+      simdrng::Philox2x32{seed}.stream(simdrng::gpu{gid >> 8}, simdrng::thread{gid & 0xFF}, simdrng::node{gid & 3});
   for (int k = 0; k < kStreamDraws; ++k) {
     out[k] = g();
   }
 }
 
 SIMDRNG_HD void sseq_chacha(std::uint64_t seed, std::uint64_t gid, std::uint64_t *out) {
-  auto g = simdrng::ChaCha<>::stream(chacha_key(seed), gid);
+  auto g = simdrng::ChaCha<>{simdrng_bit_cast<std::array<std::uint32_t, 8>>(chacha_key(seed)), 0, 0}.stream(
+      simdrng::gpu{gid >> 8}, simdrng::node{gid & 3}, simdrng::thread{gid & 0xFF});
   for (int k = 0; k < kStreamDraws; ++k) {
     out[k] = g();
   }
@@ -299,8 +305,7 @@ TEST_CASE("rotl device output equals host", "[cuda]") {
   REQUIRE(cudaGetLastError() == cudaSuccess);
   REQUIRE(cudaDeviceSynchronize() == cudaSuccess);
   std::vector<std::uint64_t> host(static_cast<std::size_t>(kRotlThreads) * 8);
-  REQUIRE(cudaMemcpy(host.data(), dev_out, host.size() * sizeof(std::uint64_t), cudaMemcpyDeviceToHost) ==
-          cudaSuccess);
+  REQUIRE(cudaMemcpy(host.data(), dev_out, host.size() * sizeof(std::uint64_t), cudaMemcpyDeviceToHost) == cudaSuccess);
   cudaFree(dev_out);
   int bad = 0;
   const int ks32[] = {0, 1, 31, 10};

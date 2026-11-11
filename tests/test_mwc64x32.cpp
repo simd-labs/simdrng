@@ -5,6 +5,8 @@
 #include <random>
 #include <simdrng/mwc64x32.hpp>
 
+#include "stream_levels_contract.hpp"
+
 #if !defined(__SIZEOF_INT128__) || defined(SIMDRNG_TEST_U128_SHIM)
 #include "mwc64x32_u128_shim.hpp"
 #define __uint128_t mwc_ref::u128
@@ -110,11 +112,11 @@ TEST_CASE("mwc64x32 jump(2^32) equals jump()", "[mwc64x32][jump_n]") {
 }
 
 // stream() must be usable in constant expressions.
-static_assert(simdrng::MWC64X32::stream(42, 0).getState() == simdrng::MWC64X32(42).getState());
+static_assert(simdrng::MWC64X32{42}.stream().getState() == simdrng::MWC64X32(42).getState());
 static_assert(simdrng::MWC64X32::min() == std::numeric_limits<simdrng::MWC64X32::result_type>::min());
 static_assert(simdrng::MWC64X32::max() == std::numeric_limits<simdrng::MWC64X32::result_type>::max());
 
-TEST_CASE("mwc64x32 stream(seed, i) equals i jumps", "[mwc64x32][stream]") {
+TEST_CASE("mwc64x32 stream thread{i} equals i jumps", "[mwc64x32][stream]") {
   for (const std::uint64_t seed : kSeeds) {
     for (std::uint64_t i = 0; i <= 8; ++i) {
       INFO("seed: " << seed << " i: " << i);
@@ -122,25 +124,34 @@ TEST_CASE("mwc64x32 stream(seed, i) equals i jumps", "[mwc64x32][stream]") {
       for (std::uint64_t j = 0; j < i; ++j) {
         by_jumps.jump();
       }
-      REQUIRE(simdrng::MWC64X32::stream(seed, i).getState() == by_jumps.getState());
+      REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::thread{i}).getState() == by_jumps.getState());
     }
   }
 }
 
-TEST_CASE("mwc64x32 stream composition at large index", "[mwc64x32][stream]") {
-  const std::uint64_t i = std::uint64_t{1} << 40;
-  simdrng::MWC64X32 advanced = simdrng::MWC64X32::stream(kSeeds[0], i);
-  advanced.jump();
-  advanced.jump();
-  advanced.jump();
-  REQUIRE(simdrng::MWC64X32::stream(kSeeds[0], i + 3).getState() == advanced.getState());
+TEST_CASE("mwc64x32 stream gpu{i} equals i long-index jumps", "[mwc64x32][stream]") {
+  // gpu sits in the high 7 index bits: gpu{v} = thread{v << 24}.
+  for (const std::uint64_t seed : kSeeds) {
+    INFO("seed: " << seed);
+    REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::gpu{2}).getState() ==
+            simdrng::MWC64X32{seed}.stream(simdrng::thread{std::uint64_t{2} << 24}).getState());
+  }
 }
 
-TEST_CASE("mwc64x32 adjacent streams share no value", "[mwc64x32][stream]") {
-  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 40}) {
+TEST_CASE("mwc64x32 stream composition at large thread level", "[mwc64x32][stream]") {
+  const std::uint64_t i = std::uint64_t{1} << 20;
+  simdrng::MWC64X32 advanced = simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i});
+  advanced.jump();
+  advanced.jump();
+  advanced.jump();
+  REQUIRE(simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i + 3}).getState() == advanced.getState());
+}
+
+TEST_CASE("mwc64x32 adjacent thread streams share no value", "[mwc64x32][stream]") {
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 20}) {
     INFO("i: " << i);
-    auto a = simdrng::MWC64X32::stream(kSeeds[0], i);
-    auto b = simdrng::MWC64X32::stream(kSeeds[0], i + 1);
+    auto a = simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i});
+    auto b = simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i + 1});
     std::array<std::uint32_t, 64> oa{}, ob{};
     for (auto &v : oa) {
       v = a();
@@ -156,4 +167,9 @@ TEST_CASE("mwc64x32 adjacent streams share no value", "[mwc64x32][stream]") {
     }
     REQUIRE(shared == 0);
   }
+}
+
+TEST_CASE("mwc64x32 stream level contract", "[mwc64x32][stream]") {
+  stream_level_contract::check_stream_levels<simdrng::MWC64X32>(
+      [](auto... levels) { return simdrng::MWC64X32{kSeeds[0]}.stream(levels...); });
 }

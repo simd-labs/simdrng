@@ -2,11 +2,13 @@
 
 #include <array>
 #include <bit>
+#include <cassert>
 #include <cstdint>
 #include <limits>
 #include <type_traits>
 
 #include "macros.hpp"
+#include "stream_levels.hpp"
 
 namespace simdrng {
 
@@ -113,26 +115,79 @@ public:
       : m_counter(simdrng_bit_cast<counter_state>(counter)), m_key(simdrng_bit_cast<key_state>(key)) {}
 
   /**
-   * @brief Per-thread stream constructor. The stream index takes the top 64
-   * counter bits (the top 32 for Philox2x32) and the low words hold the
-   * per-thread position, so streams are disjoint by construction for a given
-   * seed. O(1).
-   * @param seed Expanded into the Philox key via SplitMix.
-   * @param stream_index The stream (thread) index.
+   * @brief Level constructor: Philox(seed, levels...) equals
+   * Philox{seed}.stream(levels...).
    */
-  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE Philox stream(result_type seed,
-                                                                  std::uint64_t stream_index) noexcept {
-    // Per-thread length: 2^(N*W-64) blocks * RESULTS_PER_BLOCK outputs;
-    // Philox2x32 has a 32-bit index half, so 2^32 blocks = 2^32 outputs.
-    counter_state ctr{};
-    if constexpr (W == 32 && N == 4) {
-      ctr[N - 2] = static_cast<word_type>(stream_index);
-      ctr[N - 1] = static_cast<word_type>(stream_index >> 32);
-    } else {
-      ctr[N - 1] = static_cast<word_type>(stream_index);
+  template <typename... Levels>
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_HD explicit SIMDRNG_ALWAYS_INLINE constexpr Philox(result_type seed, Levels... levels) noexcept
+      : Philox(Philox{seed}.stream(levels...)) {}
+
+  /**
+   * @brief Level constructor with an explicit starting counter: equals
+   * Philox{seed, counter}.stream(levels...).
+   */
+  template <typename... Levels>
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_HD explicit SIMDRNG_ALWAYS_INLINE constexpr Philox(result_type seed, result_type counter,
+                                                             Levels... levels) noexcept
+      : Philox(Philox{seed, counter}.stream(levels...)) {}
+
+  /**
+   * @brief Level constructor from an explicit key/counter: equals
+   * Philox{key, counter}.stream(levels...).
+   */
+  template <typename... Levels>
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_HD explicit SIMDRNG_ALWAYS_INLINE constexpr Philox(const key_type &key, const counter_type &counter,
+                                                             Levels... levels) noexcept
+      : Philox(Philox{key, counter}.stream(levels...)) {}
+
+  /**
+   * @brief Hierarchical stream selection. The stream index sits in the top 64
+   * counter bits (the top 32 for Philox2x32) with gpu in the high half and
+   * thread in the low half, so the low words keep the per-thread position and
+   * streams are disjoint by construction for a given seed. node{n} XORs a
+   * SplitMix expansion of n into the key words (node{0} is the identity).
+   * For Philox2x32 the 32 index bits are split gpu 8 / thread 24; otherwise
+   * each level takes 32 bits. O(1).
+   * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
+   * @return The generator for the addressed stream.
+   */
+  template <typename... Levels>
+    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_HD constexpr SIMDRNG_ALWAYS_INLINE Philox stream(Levels... levels) const noexcept {
+    constexpr std::uint64_t THREAD_BITS = (W == 32 && N == 2) ? 24 : 32;
+    Philox g = *this;
+    if constexpr (detail::has_level_v<node, Levels...>) {
+      const std::uint64_t n = detail::pick_level<node>(levels...).value;
+      if (n != 0) {
+        std::uint64_t z = detail::mix64(n);
+        g.m_key[0] ^= static_cast<word_type>(z);
+        if constexpr (N == 4) {
+          g.m_key[1] ^= static_cast<word_type>(W == 32 ? z >> 32 : detail::mix64(z));
+        }
+      }
     }
-    // shortcut: the Philox2x32 index half is 32 bits, so an index >= 2^32 wraps to i mod 2^32 and streams repeat.
-    return Philox{seed_to_key(seed), simdrng_bit_cast<counter_type>(ctr)};
+    std::uint64_t gpu_v = 0;
+    std::uint64_t thread_v = 0;
+    if constexpr (detail::has_level_v<gpu, Levels...>) {
+      gpu_v = detail::pick_level<gpu>(levels...).value;
+    }
+    if constexpr (detail::has_level_v<thread, Levels...>) {
+      thread_v = detail::pick_level<thread>(levels...).value;
+    }
+    assert(gpu_v << THREAD_BITS >> THREAD_BITS == gpu_v && "gpu value overflows its stream-index field");
+    assert(thread_v < (std::uint64_t{1} << THREAD_BITS) && "thread value overflows its stream-index field");
+    const std::uint64_t index = (gpu_v << THREAD_BITS) | thread_v;
+    if constexpr (W == 32 && N == 4) {
+      g.m_counter[N - 2] = static_cast<word_type>(index);
+      g.m_counter[N - 1] = static_cast<word_type>(index >> 32);
+    } else {
+      g.m_counter[N - 1] = static_cast<word_type>(index);
+    }
+    g.m_result_index = RESULTS_PER_BLOCK; // the key changed: drop any cached block
+    return g;
   }
 
   /**

@@ -29,6 +29,7 @@ Vigna.
 
 #include "macros.hpp"
 #include "splitmix.hpp"
+#include "stream_levels.hpp"
 
 #include <bit>
 
@@ -135,6 +136,12 @@ SIMDRNG_HD constexpr jump_poly_t poly_2_128() noexcept {
   return {0x180ec6d33cfd0aba, 0xd5a61266f0c9392c, 0xa9582618e03fc9aa, 0x39abdc4529b1661c};
 }
 
+/// The fixed long_jump() stride as a polynomial: x^(2^192) mod P(x), the
+/// published xoshiro256++ long-jump constants.
+SIMDRNG_HD constexpr jump_poly_t poly_2_192() noexcept {
+  return {0x76e15d3efefdcbbf, 0xc5004e441c522fb3, 0x77710069854ee241, 0x39109bb02acbe635};
+}
+
 } // namespace detail
 
 /// Tag for a power-of-two jump: jump(pow2{e}) advances the generator by 2^e
@@ -168,44 +175,51 @@ public:
   }
 
   /**
-   * @brief Constructs the XoshiroScalar generator with a given seed and thread ID.
+   * @brief Level constructor: XoshiroScalar(seed, levels...) equals
+   * XoshiroScalar{seed}.stream(levels...).
    * @param seed The seed value.
-   * @param thread_id The thread ID.
+   * @param levels Stream levels, any subset of {node, gpu, thread}, each at most once.
    */
-  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit XoshiroScalar(const result_type seed,
-                                                                    const result_type thread_id) noexcept
-      : XoshiroScalar(seed) {
-    for (result_type i = 0; i < thread_id; ++i) {
-      jump();
-    }
-  }
+  template <typename... Levels>
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit XoshiroScalar(const result_type seed, Levels... levels) noexcept
+      : XoshiroScalar(XoshiroScalar{seed}.stream(levels...)) {}
 
   /**
-   * @brief Constructs the XoshiroScalar generator with a given seed and thread ID.
-   * @param seed The seed value.
-   * @param thread_id The thread ID.
-   * @param cluster_id The cluster ID.
+   * @brief Hierarchical stream selection. Returns a new generator on the
+   * stream addressed by the levels: node{n} reseeds the state by folding a
+   * fresh SplitMix stream into it (node{0} is the identity), gpu{g} applies
+   * g long_jumps ((x^(2^192))^g mod P(x), O(log g)), thread{t} applies t jumps
+   * ((x^(2^128))^t, O(log t)). Each gpu stream spans 2^192 values and each
+   * thread stream within it spans 2^128, so streams are disjoint per node.
+   * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
+   * @return The generator for the addressed stream.
    */
-  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit XoshiroScalar(const result_type seed, const result_type thread_id,
-                                                                    const result_type cluster_id) noexcept
-      : XoshiroScalar(seed, thread_id) {
-    for (result_type i = 0; i < cluster_id; ++i) {
-      long_jump();
+  template <typename... Levels>
+    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_HD constexpr SIMDRNG_ALWAYS_INLINE XoshiroScalar stream(Levels... levels) const noexcept {
+    XoshiroScalar g = *this;
+    if constexpr (detail::has_level_v<node, Levels...>) {
+      const std::uint64_t n = detail::pick_level<node>(levels...).value;
+      if (n != 0) {
+        SplitMix sm{n};
+        for (auto &w : g.m_state) {
+          w ^= sm();
+        }
+      }
     }
-  }
-
-  /**
-   * @brief Per-thread stream constructor. Thread @p stream_index starts at the
-   * base state jumped by stream_index * 2^128 outputs, computed in
-   * O(log stream_index) as (x^(2^128))^stream_index mod P(x). Streams are
-   * disjoint: each holds 2^128 values and there are 2^128 streams.
-   * @param seed The seed value.
-   * @param stream_index The stream (thread) index.
-   */
-  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE XoshiroScalar stream(const result_type seed,
-                                                                         const std::uint64_t stream_index) noexcept {
-    XoshiroScalar g{seed};
-    g.apply_jump_poly(detail::polypow_mod(detail::poly_2_128(), stream_index));
+    if constexpr (detail::has_level_v<gpu, Levels...>) {
+      const std::uint64_t v = detail::pick_level<gpu>(levels...).value;
+      if (v != 0) {
+        g.apply_jump_poly(detail::polypow_mod(detail::poly_2_192(), v));
+      }
+    }
+    if constexpr (detail::has_level_v<thread, Levels...>) {
+      const std::uint64_t v = detail::pick_level<thread>(levels...).value;
+      if (v != 0) {
+        g.apply_jump_poly(detail::polypow_mod(detail::poly_2_128(), v));
+      }
+    }
     return g;
   }
 

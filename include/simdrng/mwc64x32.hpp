@@ -21,11 +21,13 @@ Ported to C++ by Marco Barbone. Original implementation by Sebastiano Vigna.
 #pragma once
 
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <limits>
 
 #include "macros.hpp"
 #include "splitmix.hpp"
+#include "stream_levels.hpp"
 
 namespace simdrng {
 
@@ -59,17 +61,45 @@ public:
   }
 
   /**
-   * @brief Per-thread stream constructor. Thread @p stream_index starts at the
-   * base state jumped by stream_index * 2^32 outputs, computed in
-   * O(log stream_index) as (A1^(2^32))^stream_index mod MOD.
-   * @param seed The seed value.
-   * @param stream_index The stream (thread) index.
+   * @brief Level constructor: MWC64X32(seed, levels...) equals
+   * MWC64X32{seed}.stream(levels...).
    */
-  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE static constexpr MWC64X32 stream(const std::uint64_t seed,
-                                                                    const std::uint64_t stream_index) noexcept {
-    // Per-thread length: 2^32 values; at most 2^31 streams fit the ~2^63 period.
-    MWC64X32 g{seed};
-    g.jump_mul(powmod(JUMP_MUL, stream_index));
+  template <typename... Levels>
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...> &&
+             !detail::has_level_v<node, Levels...>)
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit MWC64X32(const std::uint64_t seed, Levels... levels) noexcept
+      : MWC64X32(MWC64X32{seed}.stream(levels...)) {}
+
+  /**
+   * @brief Hierarchical stream selection. gpu takes 7 and thread 24 bits of
+   * the stream index (gpu in the high half, debug assert on overflow), so the
+   * index stays below 2^31 and each of the 2^31 streams spans 2^32 values
+   * within the ~2^63 period. The generator at index i starts at the base
+   * state jumped by i * 2^32 outputs, computed in O(log i) as
+   * (A1^(2^32))^i mod MOD. node is rejected: hash the node id into the seed
+   * instead. O(1).
+   * @param levels Any subset of {gpu, thread}, in any order, each at most once.
+   * @return The generator for the addressed stream.
+   */
+  template <typename... Levels>
+    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...> &&
+             !detail::has_level_v<node, Levels...>)
+  SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr MWC64X32 stream(Levels... levels) const noexcept {
+    std::uint64_t gpu_v = 0;
+    std::uint64_t thread_v = 0;
+    if constexpr (detail::has_level_v<gpu, Levels...>) {
+      gpu_v = detail::pick_level<gpu>(levels...).value;
+    }
+    if constexpr (detail::has_level_v<thread, Levels...>) {
+      thread_v = detail::pick_level<thread>(levels...).value;
+    }
+    assert(gpu_v < (std::uint64_t{1} << 7) && "gpu value overflows its stream-index field");
+    assert(thread_v < (std::uint64_t{1} << 24) && "thread value overflows its stream-index field");
+    const std::uint64_t index = (gpu_v << 24) | thread_v;
+    MWC64X32 g = *this;
+    if (index != 0) {
+      g.jump_mul(powmod(JUMP_MUL, index));
+    }
     return g;
   }
 

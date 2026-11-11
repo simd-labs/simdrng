@@ -10,6 +10,7 @@
 #include "mwc64x32.hpp"
 #include "philox.hpp"
 #include "splitmix.hpp"
+#include "stream_levels.hpp"
 #include "xoshiro_scalar.hpp"
 
 #include "chacha_simd.hpp"
