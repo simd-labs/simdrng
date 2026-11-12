@@ -37,8 +37,17 @@ Pre-1.0, the public API may change between minor versions.
   constructor `Gen{seed, levels...}` and the `Gen{seed}.stream(levels...)`
   member address the same stream. The field widths and the stream length
   come from the width table in `simdrng/stream_levels.hpp`. The readme lists
-  them for each generator. A level value above its max stops the program. The
-  compiler rejects it in a constant expression. The host calls `std::abort()`.
+  them for each generator. ChaCha levels use the full 128-bit block position:
+  the 64-bit block counter plus the 64-bit nonce. The fields are node 16 bits,
+  gpu 16 bits and thread 32 bits. Each ChaCha stream owns 2^64 counter blocks.
+  A stream that draws more than its length runs into the next stream's numbers,
+  and nothing checks for this. Xoshiro256++ gives 2^127 outputs per stream.
+  SplitMix64 and MWC64X32 give 2^24 outputs per stream. Philox 2x32 gives 2^24
+  counter blocks per stream. ChaCha 8/12/20, Philox 4x32, Philox 2x64 and
+  Philox 4x64 give 2^64 counter blocks per stream.
+  A ChaCha stream past its length repeats its own numbers, because its counter
+  does not carry into the nonce. A level value above its max stops the program.
+  The compiler rejects it in a constant expression. The host calls `std::abort()`.
   CUDA device code calls `__trap()`.
 - CUDA device support for the five scalar generators (`SplitMix`, `XoshiroScalar`,
   `ChaCha`, `Philox`, `MWC64X32`): `macros.hpp` defines `SIMDRNG_HD`

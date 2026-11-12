@@ -120,10 +120,30 @@ widths and the stream length for each generator. The width table in
 | Xoshiro256++      | no limit   | 2^32 - 1  | 2^32 - 1     | 2^127 outputs                      |
 | SplitMix64        | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 outputs                       |
 | MWC64X32          | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 outputs                       |
-| ChaCha 8/12/20    | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 counter blocks (2^27 outputs) |
+| ChaCha 8/12/20    | 2^16 - 1   | 2^16 - 1  | 2^32 - 1     | 2^64 counter blocks (2^67 outputs) |
 | Philox 2x32       | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 counter blocks                |
 | Philox 4x32, 2x64 | 2^16 - 1   | 2^16 - 1  | 2^32 - 1     | 2^64 counter blocks                |
 | Philox 4x64       | no limit   | no limit  | no limit     | 2^64 counter blocks                |
+
+A stream that draws more than its length runs into the next stream's numbers,
+and nothing checks for this. The rule holds for each generator with its own
+length:
+
+- A Xoshiro256++ stream that draws more than 2^127 outputs runs into the next
+  stream's numbers, and nothing checks for this.
+- A SplitMix64 stream that draws more than 2^24 outputs runs into the next
+  stream's numbers, and nothing checks for this.
+- A MWC64X32 stream that draws more than 2^24 outputs runs into the next
+  stream's numbers, and nothing checks for this.
+- A ChaCha 8/12/20 stream that draws more than 2^64 counter blocks repeats its
+  own numbers, and nothing checks for this. The counter does not carry into the
+  nonce, so the streams of one key stay disjoint.
+- A Philox 2x32 stream that draws more than 2^24 counter blocks runs into the
+  next stream's numbers, and nothing checks for this.
+- A Philox 4x32 or 2x64 stream that draws more than 2^64 counter blocks runs
+  into the next stream's numbers, and nothing checks for this.
+- A Philox 4x64 stream that draws more than 2^64 counter blocks runs into the
+  next stream's numbers, and nothing checks for this.
 
 A level value above the max stops the program.
 In a constant expression it is a compile error. On the host the program calls

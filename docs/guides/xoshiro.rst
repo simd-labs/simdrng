@@ -70,7 +70,9 @@ disjoint parallel streams, use the level tags ``simdrng::node``,
 The levels are jump-ahead positions in the one sequence the seed gives.
 ``node{n}`` starts the stream at ``n * 2^191`` outputs, ``gpu{g}`` at
 ``g * 2^159``, and ``thread{t}`` at ``t * 2^127``. Each
-stream owns 2\ :sup:`127` outputs, so one seed gives disjoint streams. The
+stream owns 2\ :sup:`127` outputs, so one seed gives disjoint streams. A
+Xoshiro256++ stream that draws more than 2\ :sup:`127` outputs runs into the
+next stream's numbers, and nothing checks for this. The
 strides align with the fixed jumps: ``thread{2}`` equals ``jump()``,
 ``gpu{2}`` equals ``mid_jump()``, and ``node{2}`` equals ``long_jump()``.
 ``node`` has no value limit. ``gpu`` and ``thread`` hold 32 bits each. An

@@ -42,7 +42,9 @@ Periods and streams
 SplitMix64 has a period of 2\ :sup:`64`. simdrng uses it only to expand a 64-bit
 seed into the larger state of the other engines. The level tags
 (``simdrng::node``, ``simdrng::gpu``, ``simdrng::thread``) are jump-ahead
-positions in the Weyl sequence. One seed gives disjoint streams. The readme
+positions in the Weyl sequence. One seed gives disjoint streams. A SplitMix64
+stream that draws more than 2\ :sup:`24` outputs runs into the next stream's
+numbers, and nothing checks for this. The readme
 lists the field widths and the stream length. See :ref:`gen-properties`
 for the full period table.
 

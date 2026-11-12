@@ -65,7 +65,13 @@ pattern is to fix the seed and assign each work item a disjoint counter range:
 
 The level tags (``simdrng::node``, ``simdrng::gpu``, ``simdrng::thread``) are
 jump-ahead positions in the counter. One seed gives disjoint streams. The
-levels do not touch the key. The readme lists the field widths and the
+levels do not touch the key. A Philox 2x32 stream that draws more than
+2\ :sup:`24` counter blocks runs into the next stream's numbers, and nothing
+checks for this. A Philox 4x32 or 2x64 stream that draws more than
+2\ :sup:`64` counter blocks runs into the next stream's numbers, and nothing
+checks for this. A Philox 4x64 stream that draws more than 2\ :sup:`64`
+counter blocks runs into the next stream's numbers, and nothing checks for
+this. The readme lists the field widths and the
 stream length for each variant.
 
 See :ref:`gen-properties` for the full period table.

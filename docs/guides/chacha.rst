@@ -60,10 +60,15 @@ pairs). Within a fixed ``(key, nonce)`` the 64-bit block counter gives a period
 of 2\ :sup:`64` blocks. Re-running with the same ``(seed/key, counter, nonce)``
 reproduces the stream exactly, and bumping the counter or nonce yields
 different streams. The level tags (``simdrng::node``, ``simdrng::gpu``,
-``simdrng::thread``) are jump-ahead positions in the block counter. One key
-and nonce give disjoint streams. The levels do not touch the key or the
-nonce. The readme lists the field widths and the stream length. See
-:ref:`gen-properties` for the full period table.
+``simdrng::thread``) are jump-ahead positions in the 128-bit block position:
+the 64-bit counter under the 64-bit nonce. One key gives disjoint streams. The
+levels do not touch the key. The field widths are node 16 bits, gpu 16 bits and
+thread 32 bits, and each stream owns 2\ :sup:`64` counter blocks. A ChaCha
+stream that draws more than 2\ :sup:`64` counter blocks repeats its own
+numbers, and nothing checks for this. The counter does not carry into the
+nonce, so the streams of one key stay disjoint. The readme lists the field
+widths and the stream length. See :ref:`gen-properties` for the full period
+table.
 
 References
 ----------
