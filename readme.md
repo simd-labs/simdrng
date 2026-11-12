@@ -16,8 +16,8 @@ nanobind-powered Python bindings that drop straight into NumPy and SciPy.
   available scalar, runtime-SIMD-dispatched, and `-march=native`.
 - **Drop-in** with `std::uniform_int_distribution` and friends, plus a fast
   `uniform()` returning a `double` in `[0, 1)`.
-- **Parallel-ready** — per-thread and per-node independent streams via
-  `thread_id` / `cluster_id`, or Philox's counter-based reproducibility.
+- **Parallel-ready**: disjoint streams at the `node`, `gpu` and `thread`
+  levels, or Philox's counter-based reproducibility.
 - **Python** — every generator is a `numpy.random.Generator` with a GIL-released
   C++ bulk-fill fast path.
 
@@ -89,23 +89,28 @@ the rationale. Per-family guidance is in the
 
 ## Parallel streams
 
-Each generator takes optional `thread_id` and `cluster_id` parameters that carve
-out independent, non-overlapping streams per thread and per node (via xoshiro's
-`jump()` / `long_jump()`):
+The level tags `simdrng::node{...}`, `simdrng::gpu{...}` and
+`simdrng::thread{...}` carve out disjoint streams. Each tag holds one
+`std::uint64_t value`. Each generator accepts a subset of the tags. All
+permutations give the same stream. An omitted level is `0`. A duplicate tag,
+or a non-level argument, is a compile error:
 
 ```cpp
-#include <simdrng/xoshiro.hpp>
+#include <simdrng/xoshiro_scalar.hpp>
 
-simdrng::Xoshiro rng(42, 1, 2);                            // seed, thread, cluster
-simdrng::Xoshiro rng(42, omp_get_thread_num());            // OpenMP
-simdrng::Xoshiro rng(42, omp_get_thread_num(), MPI_rank);  // MPI + OpenMP
+const std::uint64_t seed = 42;
+simdrng::XoshiroScalar full{seed, simdrng::node{1}, simdrng::gpu{2}, simdrng::thread{3}};
+simdrng::XoshiroScalar per_thread{seed, simdrng::thread{static_cast<std::uint64_t>(omp_get_thread_num())}};
+simdrng::XoshiroScalar plain{seed};   // node, gpu and thread all at 0
 ```
 
-Philox takes the counter-based route instead: each work item derives its own
-sub-stream from `(seed, counter)` with no coordination — see
-[`examples/cpp/philox_counter_based.cpp`](examples/cpp/philox_counter_based.cpp).
-For the threaded example, see
-[`examples/cpp/threaded_openmp.cpp`](examples/cpp/threaded_openmp.cpp).
+The level constructor `Gen{seed, levels...}` and the `Gen{seed}.stream(levels...)`
+member address the same stream. Each family uses its own mapping of the levels.
+
+Philox gives each work item its own sub-stream from `(seed, counter)`, with no
+coordination. See
+[`examples/cpp/philox_counter_based.cpp`](examples/cpp/philox_counter_based.cpp)
+and [`examples/cpp/threaded_openmp.cpp`](examples/cpp/threaded_openmp.cpp).
 
 ## GPU streams
 
@@ -133,23 +138,7 @@ host output for all scalar classes, including `stream()`.
 
 ### Per-thread streams
 
-Each scalar class has a `constexpr` function `stream(seed, i)`. Each thread
-owns a disjoint stream. XoshiroScalar and MWC64X32 make the state in
-O(log i) steps. The other three use O(1).
-
-| Generator       | Start offset for index i        | Values in one stream | Max streams |
-|-----------------|---------------------------------|----------------------|-------------|
-| `SplitMix`      | state = seed + i × 2^32 × gamma | 2^32                 | 2^32        |
-| `XoshiroScalar` | i × 2^128 outputs               | 2^128                | 2^128       |
-| `MWC64X32`      | i × 2^32 outputs                | 2^32                 | 2^31        |
-| `Philox4x32`    | i in the top 64 counter bits    | 2^64 blocks = 2^65   | 2^64        |
-| `ChaCha`        | i as the nonce                  | 2^64 blocks = 2^67   | 2^64        |
-
-`Philox2x32` puts the index in the top 32 counter bits. Its stream is 2^32
-blocks (2^32 values). An index of 2^32 or more wraps to the stream of
-i mod 2^32.
-
-The kernel uses one stream for each thread:
+A CUDA kernel gives each thread its own disjoint stream:
 
 ```cpp
 #include <simdrng/xoshiro_scalar.hpp>
@@ -157,25 +146,24 @@ The kernel uses one stream for each thread:
 
 __global__ void fill(std::uint64_t seed, std::uint64_t *out) {
   const auto tid = static_cast<std::uint64_t>(blockIdx.x * blockDim.x + threadIdx.x);
-  auto g = simdrng::XoshiroScalar::stream(seed, tid);
+  auto g = simdrng::XoshiroScalar{seed, simdrng::thread{tid}};
   out[tid] = g();
 }
 ```
 
 ### Multi-node streams
 
-Each process jumps the seed by its process id with `long_jump()`. Each thread
-then gets its stream from the process base. The (seed, thread_id, cluster_id)
-constructor of `XoshiroScalar` does the long jumps and the thread jumps:
+Use the levels together to address a stream on one node, GPU and thread. The
+MPI rank is `node`, the CUDA device is `gpu`, the OpenMP thread is `thread`.
+`XoshiroScalar` reseeds with a SplitMix64 stream from `node{n}`. It applies
+`gpu{g}` as g long-jumps and `thread{t}` as t jumps. For one node, each pair of
+`gpu` and `thread` values addresses a disjoint stream:
 
 ```cpp
-simdrng::XoshiroScalar rng{42, omp_get_thread_num(), MPI_rank};
+const std::uint64_t rank = MPI_rank, dev = gpu_id, tid = omp_get_thread_num();
+simdrng::XoshiroScalar rng{42u, simdrng::node{rank}, simdrng::gpu{dev},
+                           simdrng::thread{tid}};
 ```
-
-`long_jump()` equals 2^192 calls to `next()`. It gives 2^64 process bases,
-and each base gives 2^64 threads of 2^128 values. For MWC64X32, the base
-uses at most 2^15 `long_jump()` calls. Each thread calls `jump(t * 2^32)` on
-the base, with at most 2^16 threads of 2^32 values.
 
 ### Limits
 

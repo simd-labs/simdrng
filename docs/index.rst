@@ -69,14 +69,14 @@ requirements, so it composes with ``std::uniform_int_distribution`` and friends;
 Parallel streams
 ----------------
 
-Pass optional ``thread_id`` / ``cluster_id`` to carve out independent,
-non-overlapping streams per thread and per node (via xoshiro's ``jump()`` /
-``long_jump()``); Philox instead derives each work item's sub-stream from
-``(seed, counter)`` with no coordination. See the per-family **Guides** below.
+The level tags (``simdrng::node``, ``simdrng::gpu``, ``simdrng::thread``) carve
+out disjoint streams. Each tag holds one ``std::uint64_t value``. Each
+generator accepts a subset of the tags. All permutations give the same stream.
+An omitted level is ``0``.
 
 The `GPU streams <https://github.com/DiamonDinoia/simdrng/blob/main/readme.md#gpu-streams>`_
-readme section has the CUDA device code, the per-thread
-``stream(seed, index)`` factory, and the multi-node recipe.
+readme section has the CUDA device code, the per-thread recipe, and the
+multi-node example.
 
 Next reads
 ----------

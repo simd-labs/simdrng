@@ -61,8 +61,7 @@ inline constexpr bool unique_levels_v =
 template <typename T, typename... Levels> inline constexpr bool has_level_v = (std::is_same_v<Levels, T> || ...);
 
 /// Returns the level of type T from the pack, or T{0} when absent.
-template <typename T, typename... Levels>
-SIMDRNG_HD constexpr T pick_level(Levels... levels) noexcept {
+template <typename T, typename... Levels> SIMDRNG_HD constexpr T pick_level(Levels... levels) noexcept {
   T result{0};
   auto f = [&](auto l) {
     if constexpr (std::is_same_v<decltype(l), T>) {

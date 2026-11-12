@@ -26,12 +26,12 @@ Pre-1.0, the public API may change between minor versions.
   equals `jump()`. Both are available on `XoshiroScalar`, `XoshiroNative`, the
   dispatched `XoshiroSIMD`, and the Python bindings (`pow2` is exported there).
   The fixed `jump()`/`mid_jump()`/`long_jump()` strides are unchanged.
-- Per-thread stream constructors for the scalar generators (`SplitMix::stream`,
-  `XoshiroScalar::stream`, `MWC64X32::stream`, `Philox::stream`, `ChaCha::stream`):
-  a `SIMDRNG_HD constexpr` factory `(seed, stream index)` that starts thread i at
-  a disjoint stream in O(log i) (xoshiro: i × 2^128 jump, MWC: i × 2^32 jump,
-  SplitMix: i × 2^32 Weyl steps, Philox: index in the top counter bits, ChaCha:
-  index as the nonce), on host and CUDA device.
+- Stream levels: the tags `simdrng::node`, `simdrng::gpu` and `simdrng::thread`
+  address disjoint streams. Each tag holds one `std::uint64_t value`. Each
+  generator accepts a subset of the tags. All permutations give the same
+  stream. An omitted level equals `0`. The level constructor
+  `Gen{seed, levels...}` and the `Gen{seed}.stream(levels...)` member address
+  the same stream.
 - CUDA device support for the five scalar generators (`SplitMix`, `XoshiroScalar`,
   `ChaCha`, `Philox`, `MWC64X32`): `macros.hpp` defines `SIMDRNG_HD`
   (`__host__ __device__` under nvcc/hipcc, empty otherwise) and every scalar
@@ -45,6 +45,11 @@ Pre-1.0, the public API may change between minor versions.
 
 ### Removed
 
+- The index stream API: `stream(seed, i)` on the scalar classes, the
+  `XoshiroScalar(seed, thread_id[, cluster_id])` constructors, and
+  `XoshiroSIMD::seed(seed, thread_id, cluster_id)` plus the matching
+  `XoshiroSIMD(seed, thread_id, cluster_id)` constructor. Use the stream level
+  tags.
 - CodSpeed regression tracking: the `codspeed` workflow and CMake preset, the
   `SIMDRNG_ENABLE_CODSPEED` option, and the codspeed-cpp fetch. Benchmarks
   still run via Google Benchmark.

@@ -60,15 +60,18 @@ Periods and streams
 
 xoshiro256++ has a period of 2\ :sup:`256` − 1. The seed is expanded through
 SplitMix64 (see :doc:`splitmix`) so even low-entropy seeds give sound state. For
-independent parallel streams, pass ``thread_id`` and ``cluster_id``:
+disjoint parallel streams, use the level tags ``simdrng::node``,
+``simdrng::gpu`` and ``simdrng::thread``:
 
 .. code-block:: cpp
 
-   simdrng::Xoshiro rng(seed, thread_id, cluster_id);
+   simdrng::XoshiroScalar rng{seed, simdrng::node{n}, simdrng::gpu{g}, simdrng::thread{t}};
 
-Internally ``jump()`` carves out non-overlapping per-thread subsequences and
-``long_jump()`` per-cluster starting points. See :ref:`gen-properties` for the
-exact jump spacing and the full period table.
+``node{n}`` reseeds with a SplitMix64 stream from ``n``. ``gpu{g}``
+applies ``g`` long-jumps. ``thread{t}`` applies ``t`` jumps. For one node, each
+pair of ``gpu`` and ``thread`` values addresses a disjoint stream. An omitted
+level is ``0``. See :ref:`gen-properties` for the jump spacing and the full
+period table.
 
 To address an arbitrary stream offset, ``jump(n)`` advances the state by exactly
 ``n`` calls to the generator. It builds the jump polynomial ``x^n mod P(x)`` on
