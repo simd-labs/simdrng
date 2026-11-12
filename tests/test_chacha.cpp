@@ -128,3 +128,15 @@ TEST_CASE("ChaCha stream level contract", "[chacha][stream]") {
   stream_level_contract::check_stream_levels<ChaCha20>(
       [](auto... levels) { return ChaCha20{kStreamKey, 0, 0}.stream(levels...); });
 }
+
+TEST_CASE("chacha max in-range levels match pinned head output", "[chacha][stream]") {
+  // gpu and thread each hold one 32-bit nonce half (0xFFFFFFFF), the largest
+  // values that fit. The draws are pinned to the output of HEAD 911f82b at
+  // key kStreamKey; the release range check must not move any in-range output.
+  constexpr std::uint64_t expected[] = {0x598b8890720aeaddULL, 0xb24705df9756a5e1ULL, 0xa955dfa46e2f6ccbULL,
+                                        0xb4b4d208476e53c6ULL};
+  auto g = ChaCha20{kStreamKey, 0, 0}.stream(simdrng::gpu{0xFFFFFFFFULL}, simdrng::thread{0xFFFFFFFFULL});
+  for (const auto want : expected) {
+    REQUIRE(g() == want);
+  }
+}

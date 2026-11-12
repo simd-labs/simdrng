@@ -194,3 +194,49 @@ TEST_CASE("mwc64x32 stream level contract", "[mwc64x32][stream]") {
   stream_level_contract::check_stream_levels<simdrng::MWC64X32>(
       [](auto... levels) { return simdrng::MWC64X32{kSeeds[0]}.stream(levels...); });
 }
+
+TEST_CASE("mwc64x32 output without node matches pinned head output", "[mwc64x32][stream]") {
+  // Regression pin: the draws are pinned to the output of HEAD 911f82b at
+  // seed 0x0102030405060708. Node support must not move any stream without a
+  // node tag.
+  constexpr std::uint64_t kPinSeed = 0x0102030405060708ULL;
+  constexpr std::uint32_t base[] = {0x5458d408U, 0x6eff2c5bU, 0x012f97b8U, 0x3b3cf5aaU,
+                                    0x06cdaf26U, 0x671e757eU, 0xcddca859U, 0x9ba47c1aU};
+  auto g = simdrng::MWC64X32{kPinSeed};
+  for (const auto want : base) {
+    REQUIRE(g() == want);
+  }
+  constexpr std::uint32_t streamed[] = {0xb313f8cfU, 0x3c85c854U, 0xb76d0abbU, 0x60a85f3bU};
+  auto s = simdrng::MWC64X32{kPinSeed}.stream(simdrng::gpu{1}, simdrng::thread{2});
+  for (const auto want : streamed) {
+    REQUIRE(s() == want);
+  }
+}
+
+TEST_CASE("mwc64x32 node mixes mix64(n) into the seed state", "[mwc64x32][stream]") {
+  // White-box pins, cross-checked against an independent reference: node{n}
+  // XORs mix64(n) into the (x, c) seed state before the index jump, and
+  // reduces the state modulo 0xfff145f7ffffffff. A dropped node fold fails
+  // this test by name.
+  constexpr std::uint64_t kPinSeed = 0x0102030405060708ULL;
+  using state_t = simdrng::array<std::uint32_t, 2>;
+  REQUIRE(simdrng::MWC64X32{kPinSeed}.stream(simdrng::node{1}).getState() == state_t{0xdd5a88c8U, 0x910a2dedU});
+  REQUIRE(simdrng::MWC64X32{kPinSeed}.stream(simdrng::node{2}).getState() == state_t{0x48cf82c7U, 0x975835dfU});
+  // node{0} is the identity and node{1} is not thread{1}.
+  REQUIRE(simdrng::MWC64X32{kPinSeed}.stream(simdrng::node{0}).getState() == simdrng::MWC64X32{kPinSeed}.getState());
+  REQUIRE(simdrng::MWC64X32{kPinSeed}.stream(simdrng::node{1}).getState() !=
+          simdrng::MWC64X32{kPinSeed}.stream(simdrng::thread{1}).getState());
+}
+
+TEST_CASE("mwc64x32 node mix keeps a valid state on the degenerate mix", "[mwc64x32][stream]") {
+  // Exactly one n makes the mix land on the degenerate residue 0. Both
+  // preimages of it must fall back to the seed guard state (c = 1), never to a
+  // stuck generator.
+  using state_t = simdrng::array<std::uint32_t, 2>;
+  constexpr state_t kFallback{2298633409U, 1U};
+  simdrng::MWC64X32 g{0};
+  g.setState({0x89025cc1U, 0x910a2decU}); // state ^ mix64(1) == 0
+  REQUIRE(g.stream(simdrng::node{1}).getState() == kFallback);
+  g.setState({0x76fda33eU, 0x6efb681bU}); // state ^ mix64(1) == MOD
+  REQUIRE(g.stream(simdrng::node{1}).getState() == kFallback);
+}

@@ -98,10 +98,11 @@ public:
 
   /**
    * @brief Hierarchical stream selection. gpu takes the high nonce half and
-   * thread the low nonce half (32 bits each, debug assert on overflow), so
-   * streams are disjoint by construction for a given key and every stream
-   * keeps the full 64-bit counter range. node{n} XORs a SplitMix expansion of
-   * n into the eight key words (node{0} is the identity). O(R).
+   * thread the low nonce half (32 bits each, an out-of-range value fails hard
+   * in every build type), so streams are disjoint by construction for a given
+   * key and every stream keeps the full 64-bit counter range. node{n} XORs a
+   * SplitMix expansion of n into the eight key words (node{0} is the
+   * identity). O(R).
    * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
@@ -132,6 +133,9 @@ public:
     }
     assert(gpu_v < (std::uint64_t{1} << 32) && "gpu value overflows its nonce half");
     assert(thread_v < (std::uint64_t{1} << 32) && "thread value overflows its nonce half");
+    if (gpu_v >= (std::uint64_t{1} << 32) || thread_v >= (std::uint64_t{1} << 32)) [[unlikely]] {
+      detail::stream_level_out_of_range();
+    }
     g.m_state[14] = static_cast<matrix_word>(thread_v);
     g.m_state[15] = static_cast<matrix_word>(gpu_v);
     g.m_result_index = static_cast<std::uint8_t>(g.m_result_cache.size());

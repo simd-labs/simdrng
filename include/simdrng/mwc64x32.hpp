@@ -65,26 +65,45 @@ public:
    * MWC64X32{seed}.stream(levels...).
    */
   template <typename... Levels>
-    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...> &&
-             !detail::has_level_v<node, Levels...>)
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit MWC64X32(const std::uint64_t seed, Levels... levels) noexcept
       : MWC64X32(MWC64X32{seed}.stream(levels...)) {}
 
   /**
-   * @brief Hierarchical stream selection. gpu takes 7 and thread 24 bits of
-   * the stream index (gpu in the high half; an out-of-range value fails hard
-   * in every build type), so the index stays below 2^31 and each of the 2^31
-   * streams spans 2^32 values within the ~2^63 period. The generator at index
-   * i starts at the base state jumped by i * 2^32 outputs, computed in O(log
-   * i) as (A1^(2^32))^i mod MOD. node is rejected: hash the node id into the
-   * seed instead. O(1).
-   * @param levels Any subset of {gpu, thread}, in any order, each at most once.
+   * @brief Hierarchical stream selection. node{n} XORs a SplitMix expansion of
+   * n into the (x, c) seed state before the index jump (node{0} is the
+   * identity), the same fold SplitMix, Philox and ChaCha apply. gpu takes 7 and
+   * thread 24 bits of the stream index (gpu in the high half; an out-of-range
+   * value fails hard in every build type), so the index stays below 2^31 and
+   * each of the 2^31 streams spans 2^32 values within the ~2^63 period. The
+   * generator at index i starts at the base state jumped by i * 2^32 outputs,
+   * computed in O(log i) as (A1^(2^32))^i mod MOD. O(1).
+   * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
   template <typename... Levels>
-    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...> &&
-             !detail::has_level_v<node, Levels...>)
+    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr MWC64X32 stream(Levels... levels) const noexcept {
+    MWC64X32 g = *this;
+    if constexpr (detail::has_level_v<node, Levels...>) {
+      const std::uint64_t n = detail::pick_level<node>(levels...).value;
+      if (n != 0) {
+        std::uint64_t s = (static_cast<std::uint64_t>(g.m_c) << 32) | g.m_x;
+        s ^= detail::mix64(n);
+        if (s >= MOD) {
+          s -= MOD; // one subtraction keeps the state in [0, MOD): MOD > 2^63
+        }
+        if (s == 0) {
+          // Exactly one n lands on the degenerate residue 0. Reuse the seed
+          // guard there: c = 1 with a mixed x is a valid state for every n.
+          g.m_c = 1;
+          g.m_x = static_cast<result_type>(detail::mix64(n));
+        } else {
+          g.m_x = static_cast<result_type>(s);
+          g.m_c = static_cast<result_type>(s >> 32);
+        }
+      }
+    }
     std::uint64_t gpu_v = 0;
     std::uint64_t thread_v = 0;
     if constexpr (detail::has_level_v<gpu, Levels...>) {
@@ -99,7 +118,6 @@ public:
       detail::stream_level_out_of_range();
     }
     const std::uint64_t index = (gpu_v << 24) | thread_v;
-    MWC64X32 g = *this;
     if (index != 0) {
       g.jump_mul(powmod(JUMP_MUL, index));
     }

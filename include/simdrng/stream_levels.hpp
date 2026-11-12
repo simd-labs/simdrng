@@ -18,8 +18,10 @@
 //   SplitMix64:    node XORs a SplitMix expansion of n into the seed state
 //                  (same fold Philox and ChaCha apply to their key words),
 //                  gpu 8 / thread 24 bits of the 32-bit index word.
-//   MWC64X32:      node is a compile error (no jump structure); index bits:
-//                  gpu 7 / thread 24.
+//   MWC64X32:      node XORs a SplitMix expansion of n into the (x, c) seed
+//                  state before the index jump (folded into the
+//                  modulus; the seed guard covers the degenerate mix);
+//                  index bits: gpu 7 / thread 24.
 // A gpu or thread value that does not fit its index field is a hard failure in
 // every build type (detail::stream_level_out_of_range), never an alias.
 

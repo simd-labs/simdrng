@@ -212,6 +212,22 @@ add_test(
     NAME testStreamLevelsOOB-mwc64x32-thread
     COMMAND testStreamLevelsOOB mwc64x32-thread
 )
+add_test(
+    NAME testStreamLevelsOOB-splitmix-gpu
+    COMMAND testStreamLevelsOOB splitmix-gpu
+)
+add_test(
+    NAME testStreamLevelsOOB-splitmix-thread
+    COMMAND testStreamLevelsOOB splitmix-thread
+)
+add_test(
+    NAME testStreamLevelsOOB-chacha-gpu
+    COMMAND testStreamLevelsOOB chacha-gpu
+)
+add_test(
+    NAME testStreamLevelsOOB-chacha-thread
+    COMMAND testStreamLevelsOOB chacha-thread
+)
 
 # CUDA device test: scalar generator output on device equals host output.
 if(SIMDRNG_CUDA)

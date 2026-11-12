@@ -111,3 +111,16 @@ TEST_CASE("splitmix stream level contract", "[splitmix][stream]") {
   stream_level_contract::check_stream_levels<simdrng::SplitMix>(
       [](auto... levels) { return simdrng::SplitMix{kStreamSeed}.stream(levels...); });
 }
+
+TEST_CASE("splitmix max in-range levels match pinned head output", "[splitmix][stream]") {
+  // gpu 8 bits (255) and thread 24 bits (0xFFFFFF) are the largest values
+  // that fit the 32-bit stream index. The draws are pinned to the output of
+  // HEAD 911f82b at seed 0x0102030405060708; the release range check must not
+  // move any in-range output.
+  constexpr std::uint64_t expected[] = {0xde109439d8dc8fe7ULL, 0xa95159061d686ed1ULL, 0xc63e1691676d6216ULL,
+                                        0x234a88f99484bdd3ULL};
+  auto g = simdrng::SplitMix{kStreamSeed}.stream(simdrng::gpu{255}, simdrng::thread{0xFFFFFFULL});
+  for (const auto want : expected) {
+    REQUIRE(g() == want);
+  }
+}

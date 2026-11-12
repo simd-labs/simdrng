@@ -166,9 +166,10 @@ void check_equal(kernel_fn kernel, seq_fn seq, std::uint64_t seed) {
 }
 
 // Hierarchical streams: 4096 threads, each builds Gen{seed}.stream(levels...)
-// from its gid (node = gid & 3, gpu = gid >> 8, thread = gid & 0xFF) and draws
-// 8 values. The host runs the same sseq functions, so bit equality covers the
-// host/device parity of the level paths. Only MWC64X32 rejects node.
+// from its gid (node = gid & 3, gpu = gid >> 8 or gid >> 10, thread = gid &
+// 0xFF or gid & 0x3FF) and draws 8 values. The host runs the same sseq
+// functions, so bit equality covers the host/device parity of the level paths.
+// All generators accept node.
 constexpr int kStreamThreads = 4096;
 constexpr int kStreamDraws = 8;
 
@@ -190,7 +191,7 @@ SIMDRNG_HD void sseq_xoshiro(std::uint64_t seed, std::uint64_t gid, std::uint64_
 }
 
 SIMDRNG_HD void sseq_mwc(std::uint64_t seed, std::uint64_t gid, std::uint64_t *out) {
-  auto g = simdrng::MWC64X32{seed}.stream(simdrng::gpu{gid >> 8}, simdrng::thread{gid & 0xFF});
+  auto g = simdrng::MWC64X32{seed}.stream(simdrng::gpu{gid >> 10}, simdrng::node{gid & 3}, simdrng::thread{gid & 0x3FF});
   for (int k = 0; k < kStreamDraws; ++k) {
     out[k] = g();
   }
