@@ -98,13 +98,14 @@ public:
 
   /**
    * @brief Hierarchical stream selection. The levels select a position in the
-   * one counter block sequence the key and nonce define and never touch the
-   * key or the nonce. The tuple maps to the jump distance node * 2^56 + gpu *
-   * 2^48 + thread * 2^24 in counter blocks, in the field layout
-   * detail::widths_tight (node 8 / gpu 8 / thread 24 bits), added to the
-   * 64-bit counter. Each stream owns the 2^24 counter blocks from its start
-   * (2^27 outputs), so streams are disjoint. A level value past its field
-   * fails hard in every build type (never an alias). O(1).
+   * one block sequence the key defines and never touch the key. The position
+   * is the 128-bit block position: the 64-bit counter (state words 12-13)
+   * under the 64-bit nonce (state words 14-15). The tuple maps to the jump
+   * distance node * 2^112 + gpu * 2^96 + thread * 2^64 in counter blocks. The
+   * field layout is detail::widths_counter128 (node 16 / gpu 16 / thread 32
+   * bits). The distance adds to the position. Each stream owns the 2^64
+   * counter blocks at its nonce, so streams are disjoint. A level value past
+   * its field fails hard in every build type (never an alias). O(1).
    * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
@@ -113,11 +114,29 @@ public:
   SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr ChaCha stream(Levels... levels) const noexcept {
     ChaCha g = *this;
     if constexpr (sizeof...(Levels) > 0) {
-      const std::uint64_t distance = detail::level_distance64(detail::widths_tight, levels...);
-      const std::uint64_t counter = (static_cast<std::uint64_t>(g.m_state[13]) << 32) | g.m_state[12];
-      const std::uint64_t moved = counter + distance;
-      g.m_state[12] = static_cast<matrix_word>(moved);
-      g.m_state[13] = static_cast<matrix_word>(moved >> 32);
+      // The nonce is the high half of the 128-bit position, so the field
+      // shifts drop the block width. inc_counter never carries the counter
+      // into the nonce, so the 128-bit position is not one sequence. The
+      // stream is still disjoint because each stream's 2^64 blocks never
+      // leave its own nonce value.
+      constexpr auto Wd = detail::widths_counter128;
+      std::uint64_t distance = 0;
+      if constexpr (detail::has_level_v<node, Levels...>) {
+        distance |= detail::stream_level_checked(Wd.node_bits, detail::pick_level<node>(levels...).value)
+                    << (Wd.node_shift() - Wd.block_bits);
+      }
+      if constexpr (detail::has_level_v<gpu, Levels...>) {
+        distance |= detail::stream_level_checked(Wd.gpu_bits, detail::pick_level<gpu>(levels...).value)
+                    << (Wd.gpu_shift() - Wd.block_bits);
+      }
+      if constexpr (detail::has_level_v<thread, Levels...>) {
+        distance |= detail::stream_level_checked(Wd.thread_bits, detail::pick_level<thread>(levels...).value)
+                    << (Wd.thread_shift() - Wd.block_bits);
+      }
+      const std::uint64_t nonce = (static_cast<std::uint64_t>(g.m_state[15]) << 32) | g.m_state[14];
+      const std::uint64_t moved = nonce + distance;
+      g.m_state[14] = static_cast<matrix_word>(moved);
+      g.m_state[15] = static_cast<matrix_word>(moved >> 32);
       // The position moved: drop any cached block.
       g.m_result_index = static_cast<std::uint8_t>(g.m_result_cache.size());
     }

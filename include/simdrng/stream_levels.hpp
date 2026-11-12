@@ -81,21 +81,34 @@ template <typename T, typename... Levels> SIMDRNG_HD constexpr T pick_level(Leve
 /// The fields sit at disjoint shifts: thread at block_bits (shift c), gpu at
 /// block_bits + thread_bits (shift b), node at block_bits + thread_bits +
 /// gpu_bits (shift a). Every stream owns 2^block_bits outputs (counter blocks
-/// for the counter-based generators). One row per period or counter budget:
+/// for the counter-based generators). One row per period or counter budget.
+/// A stream that draws more than its length runs into the next stream's
+/// numbers, and nothing checks for this. ChaCha wraps to its own start
+/// instead, because its counter does not carry into the nonce:
 ///
 ///   widths_tight        node 8 / gpu 8 / thread 24, block 2^24.
-///     SplitMix64 (period 2^64): 2^24 outputs per stream.
-///     MWC64X32 (period about 2^63): 2^24 outputs per stream.
-///     Philox2x32 (64-bit counter): 2^24 counter blocks per stream.
-///     ChaCha (64-bit counter): 2^24 counter blocks = 2^27 outputs per stream.
+///     SplitMix64 (period 2^64): 2^24 outputs per stream. A stream that
+///     draws more than 2^24 outputs runs into the next stream's numbers.
+///     MWC64X32 (period about 2^63): 2^24 outputs per stream. A stream that
+///     draws more than 2^24 outputs runs into the next stream's numbers.
+///     Philox2x32 (64-bit counter): 2^24 counter blocks per stream. A stream
+///     that draws more than 2^24 counter blocks runs into the next stream's
+///     numbers.
 ///   widths_xoshiro256   node 64 / gpu 32 / thread 32, block 2^127.
 ///     XoshiroScalar (period 2^256 - 1): 2^127 outputs per stream. The
-///     fields stop at 255 bits so no block wraps the period.
+///     fields stop at 255 bits so no block wraps the period. A stream that
+///     draws more than 2^127 outputs runs into the next stream's numbers.
 ///   widths_counter128   node 16 / gpu 16 / thread 32, block 2^64.
 ///     Philox4x32, Philox2x64 (128-bit counters): 2^64 counter blocks per
-///     stream, the full 64-bit counter range as position.
+///     stream, the full 64-bit counter range as position. A stream that
+///     draws more than 2^64 counter blocks runs into the next stream's
+///     numbers. ChaCha (64-bit counter plus 64-bit nonce): 2^64 counter
+///     blocks per stream. A stream that draws more than 2^64 counter blocks
+///     repeats its own numbers.
 ///   widths_counter256   node 64 / gpu 64 / thread 64, block 2^64.
-///     Philox4x64 (256-bit counter): 2^64 counter blocks per stream.
+///     Philox4x64 (256-bit counter): 2^64 counter blocks per stream. A
+///     stream that draws more than 2^64 counter blocks runs into the next
+///     stream's numbers.
 struct stream_widths {
   std::uint64_t node_bits;
   std::uint64_t gpu_bits;

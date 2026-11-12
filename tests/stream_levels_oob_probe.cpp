@@ -33,10 +33,11 @@ simdrng::detail::stream_widths widths_for(const char *name) {
   if (std::strstr(name, "philox4x64") != nullptr) {
     return simdrng::detail::widths_counter256;
   }
-  if (std::strstr(name, "philox4x32") != nullptr || std::strstr(name, "philox2x64") != nullptr) {
+  if (std::strstr(name, "philox4x32") != nullptr || std::strstr(name, "philox2x64") != nullptr ||
+      std::strstr(name, "chacha") != nullptr) {
     return simdrng::detail::widths_counter128;
   }
-  return simdrng::detail::widths_tight; // splitmix, mwc64x32, philox2x32, chacha
+  return simdrng::detail::widths_tight; // splitmix, mwc64x32, philox2x32
 }
 
 /// The first level value past the named field.
