@@ -91,9 +91,8 @@ the rationale. Per-family guidance is in the
 
 The level tags `simdrng::node{...}`, `simdrng::gpu{...}` and
 `simdrng::thread{...}` carve out disjoint streams. Each tag holds one
-`std::uint64_t value`. Each generator accepts all three tags. `MWC64X32`
-rejects `node` at compile time. All permutations give the same stream. An
-omitted level is `0`. A duplicate tag,
+`std::uint64_t value`. Each generator accepts all three tags. All permutations
+give the same stream. An omitted level is `0`. A duplicate tag,
 or a non-level argument, is a compile error:
 
 ```cpp
@@ -120,10 +119,9 @@ limit.
 | Philox 2x32        | 2^8 - 1        | 2^24 - 1       |
 | MWC64X32           | 2^7 - 1        | 2^24 - 1       |
 
-A `gpu` or `thread` value above the max stops the program in all build types
-on Philox and MWC64X32. In constant evaluation it is a compile error. On the
-host the program calls `std::abort()`. In CUDA device code it calls `__trap()`.
-SplitMix64 and ChaCha check the value with a debug assert.
+A `gpu` or `thread` value above the max stops the program in all build types.
+In constant evaluation it is a compile error. On the host the program calls
+`std::abort()`. In CUDA device code it calls `__trap()`.
 
 Philox gives each work item its own sub-stream from `(seed, counter)`, with no
 coordination. See

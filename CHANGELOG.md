@@ -28,18 +28,18 @@ Pre-1.0, the public API may change between minor versions.
   The fixed `jump()`/`mid_jump()`/`long_jump()` strides are unchanged.
 - Stream levels: the tags `simdrng::node`, `simdrng::gpu` and `simdrng::thread`
   address disjoint streams. Each tag holds one `std::uint64_t value`. Each
-  generator accepts all three tags. `MWC64X32` rejects `node` at compile time.
-  SplitMix64 folds `node{n}` into the seed, like Philox and ChaCha fold it
-  into the key words. All permutations give the same stream. An omitted level
-  equals `0`. The level constructor `Gen{seed, levels...}` and the
-  `Gen{seed}.stream(levels...)` member address the same stream. Each generator
-  gives each level a value range. Philox 4x gives 32 index bits to each level.
-  Philox2x32 gives `gpu` 8 bits and `thread` 24 bits. SplitMix64 gives `gpu` 8
-  bits and `thread` 24 bits. MWC64X32 gives `gpu` 7 bits and `thread` 24 bits.
-  Xoshiro256++ has no limit. A `gpu` or `thread` value above the limit stops
-  the program in all build types on Philox and MWC64X32: a compile error in
-  constant evaluation, `std::abort()` on the host, `__trap()` in CUDA device
-  code. SplitMix64 and ChaCha check the value with a debug assert.
+  generator accepts all three tags. SplitMix64 and MWC64X32 fold `node{n}` into
+  the seed state, like Philox and ChaCha fold it into the key words. All
+  permutations give the same stream. An omitted level equals `0`. The level
+  constructor `Gen{seed, levels...}` and the `Gen{seed}.stream(levels...)`
+  member address the same stream. Each generator gives each level a value
+  range. Philox 4x gives 32 index bits to each level. Philox2x32 gives `gpu` 8
+  bits and `thread` 24 bits. SplitMix64 gives `gpu` 8 bits and `thread` 24 bits.
+  MWC64X32 gives `gpu` 7 bits and `thread` 24 bits. ChaCha gives `gpu` and
+  `thread` one 32-bit nonce half each. Xoshiro256++ has no limit. A `gpu` or
+  `thread` value above the limit stops the program in all build types: a
+  compile error in constant evaluation, `std::abort()` on the host, `__trap()`
+  in CUDA device code.
 - CUDA device support for the five scalar generators (`SplitMix`, `XoshiroScalar`,
   `ChaCha`, `Philox`, `MWC64X32`): `macros.hpp` defines `SIMDRNG_HD`
   (`__host__ __device__` under nvcc/hipcc, empty otherwise) and every scalar
