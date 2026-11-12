@@ -91,8 +91,9 @@ the rationale. Per-family guidance is in the
 
 The level tags `simdrng::node{...}`, `simdrng::gpu{...}` and
 `simdrng::thread{...}` carve out disjoint streams. Each tag holds one
-`std::uint64_t value`. Each generator accepts a subset of the tags. All
-permutations give the same stream. An omitted level is `0`. A duplicate tag,
+`std::uint64_t value`. Each generator accepts all three tags. `MWC64X32`
+rejects `node` at compile time. All permutations give the same stream. An
+omitted level is `0`. A duplicate tag,
 or a non-level argument, is a compile error:
 
 ```cpp
@@ -106,6 +107,23 @@ simdrng::XoshiroScalar plain{seed};   // node, gpu and thread all at 0
 
 The level constructor `Gen{seed, levels...}` and the `Gen{seed}.stream(levels...)`
 member address the same stream. Each family uses its own mapping of the levels.
+
+Each generator gives each level a value range. The `node` tag has no value
+limit.
+
+| Generator          | `gpu` max      | `thread` max   |
+|--------------------|----------------|----------------|
+| Xoshiro256++       | no limit       | no limit       |
+| SplitMix64         | 2^8 - 1        | 2^24 - 1       |
+| ChaCha 8/12/20     | 2^32 - 1       | 2^32 - 1       |
+| Philox 4x32, 4x64  | 2^32 - 1       | 2^32 - 1       |
+| Philox 2x32        | 2^8 - 1        | 2^24 - 1       |
+| MWC64X32           | 2^7 - 1        | 2^24 - 1       |
+
+A `gpu` or `thread` value above the max stops the program in all build types
+on Philox and MWC64X32. In constant evaluation it is a compile error. On the
+host the program calls `std::abort()`. In CUDA device code it calls `__trap()`.
+SplitMix64 and ChaCha check the value with a debug assert.
 
 Philox gives each work item its own sub-stream from `(seed, counter)`, with no
 coordination. See

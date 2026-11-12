@@ -68,7 +68,8 @@ disjoint parallel streams, use the level tags ``simdrng::node``,
    simdrng::XoshiroScalar rng{seed, simdrng::node{n}, simdrng::gpu{g}, simdrng::thread{t}};
 
 ``node{n}`` reseeds with a SplitMix64 stream from ``n``. ``gpu{g}``
-applies ``g`` long-jumps. ``thread{t}`` applies ``t`` jumps. For one node, each
+applies ``g`` long-jumps. ``thread{t}`` applies ``t`` jumps. Each tag has no
+value limit. For one node, each
 pair of ``gpu`` and ``thread`` values addresses a disjoint stream. An omitted
 level is ``0``. See :ref:`gen-properties` for the jump spacing and the full
 period table.
