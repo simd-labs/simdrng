@@ -72,9 +72,10 @@ Parallel streams
 The level tags (``simdrng::node``, ``simdrng::gpu``, ``simdrng::thread``) carve
 out disjoint streams. Each tag holds one ``std::uint64_t value``. Each
 generator accepts all three tags. All permutations give the same stream. An
-omitted level is ``0``. Each generator gives each level a value range. A
-``gpu`` or ``thread`` value above the limit stops the program in every build
-type. The readme lists the ranges.
+omitted level is ``0``. The levels are jump-ahead positions in the one
+sequence the seed gives, so one seed gives disjoint streams. A level value
+above its max stops the program. The readme lists the
+field widths and the stream length for each generator.
 
 The `GPU streams <https://github.com/DiamonDinoia/simdrng/blob/main/readme.md#gpu-streams>`_
 readme section has the CUDA device code, the per-thread recipe, and the

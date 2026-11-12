@@ -59,7 +59,11 @@ Periods and streams
 pairs). Within a fixed ``(key, nonce)`` the 64-bit block counter gives a period
 of 2\ :sup:`64` blocks. Re-running with the same ``(seed/key, counter, nonce)``
 reproduces the stream exactly, and bumping the counter or nonce yields
-independent streams. See :ref:`gen-properties` for the full period table.
+different streams. The level tags (``simdrng::node``, ``simdrng::gpu``,
+``simdrng::thread``) are jump-ahead positions in the block counter. One key
+and nonce give disjoint streams. The levels do not touch the key or the
+nonce. The readme lists the field widths and the stream length. See
+:ref:`gen-properties` for the full period table.
 
 References
 ----------

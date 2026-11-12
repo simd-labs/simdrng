@@ -105,25 +105,35 @@ simdrng::XoshiroScalar plain{seed};   // node, gpu and thread all at 0
 ```
 
 The level constructor `Gen{seed, levels...}` and the `Gen{seed}.stream(levels...)`
-member address the same stream. Each family uses its own mapping of the levels.
+member address the same stream.
 
-Each generator gives each level a value range. The `node` tag has no value
-limit.
+A level tuple is a jump distance in the one sequence the seed gives.
+The distance is `node * 2^a + gpu * 2^b + thread * 2^c`.
+The bit fields are disjoint (`a > b > c`). One seed gives disjoint
+streams. The levels do not touch the seed or the key. Each stream owns a block of `2^c` outputs, or
+counter blocks for the counter-based generators. The table lists the field
+widths and the stream length for each generator. The width table in
+`include/simdrng/stream_levels.hpp` is the one source of truth.
 
-| Generator          | `gpu` max      | `thread` max   |
-|--------------------|----------------|----------------|
-| Xoshiro256++       | no limit       | no limit       |
-| SplitMix64         | 2^8 - 1        | 2^24 - 1       |
-| ChaCha 8/12/20     | 2^32 - 1       | 2^32 - 1       |
-| Philox 4x32, 4x64  | 2^32 - 1       | 2^32 - 1       |
-| Philox 2x32        | 2^8 - 1        | 2^24 - 1       |
-| MWC64X32           | 2^7 - 1        | 2^24 - 1       |
+| Generator         | `node` max | `gpu` max | `thread` max | Stream length                      |
+|-------------------|------------|-----------|--------------|------------------------------------|
+| Xoshiro256++      | no limit   | 2^32 - 1  | 2^32 - 1     | 2^127 outputs                      |
+| SplitMix64        | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 outputs                       |
+| MWC64X32          | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 outputs                       |
+| ChaCha 8/12/20    | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 counter blocks (2^27 outputs) |
+| Philox 2x32       | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 counter blocks                |
+| Philox 4x32, 2x64 | 2^16 - 1   | 2^16 - 1  | 2^32 - 1     | 2^64 counter blocks                |
+| Philox 4x64       | no limit   | no limit  | no limit     | 2^64 counter blocks                |
 
-A `gpu` or `thread` value above the max stops the program in all build types.
-In constant evaluation it is a compile error. On the host the program calls
+A level value above the max stops the program.
+In a constant expression it is a compile error. On the host the program calls
 `std::abort()`. In CUDA device code it calls `__trap()`.
 
-Philox gives each work item its own sub-stream from `(seed, counter)`, with no
+For the counter-based generators one counter block is one Philox block (2 or
+4 words) or one 64-byte ChaCha block. The low counter words keep the
+position in the stream block. Keep the position of the plain generator
+below the stream length, so the blocks stay disjoint. Philox gives each work
+item its own sub-stream from `(seed, counter)`, with no
 coordination. See
 [`examples/cpp/philox_counter_based.cpp`](examples/cpp/philox_counter_based.cpp)
 and [`examples/cpp/threaded_openmp.cpp`](examples/cpp/threaded_openmp.cpp).
@@ -171,9 +181,7 @@ __global__ void fill(std::uint64_t seed, std::uint64_t *out) {
 
 Use the levels together to address a stream on one node, GPU and thread. The
 MPI rank is `node`, the CUDA device is `gpu`, the OpenMP thread is `thread`.
-`XoshiroScalar` reseeds with a SplitMix64 stream from `node{n}`. It applies
-`gpu{g}` as g long-jumps and `thread{t}` as t jumps. For one node, each pair of
-`gpu` and `thread` values addresses a disjoint stream:
+Each level adds its jump distance to the one sequence the seed gives:
 
 ```cpp
 const std::uint64_t rank = MPI_rank, dev = gpu_id, tid = omp_get_thread_num();

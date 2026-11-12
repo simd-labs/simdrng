@@ -27,19 +27,19 @@ Pre-1.0, the public API may change between minor versions.
   dispatched `XoshiroSIMD`, and the Python bindings (`pow2` is exported there).
   The fixed `jump()`/`mid_jump()`/`long_jump()` strides are unchanged.
 - Stream levels: the tags `simdrng::node`, `simdrng::gpu` and `simdrng::thread`
-  address disjoint streams. Each tag holds one `std::uint64_t value`. Each
-  generator accepts all three tags. SplitMix64 and MWC64X32 fold `node{n}` into
-  the seed state, like Philox and ChaCha fold it into the key words. All
+  address disjoint streams from one seed. Each tag holds one `std::uint64_t
+  value`. Each generator accepts all three tags. The levels are jump-ahead
+  positions in the one sequence the seed gives. The tuple maps to the jump
+  distance `node * 2^a + gpu * 2^b + thread * 2^c` with disjoint bit fields.
+  Each stream owns a block of `2^c` outputs (counter blocks for the
+  counter-based generators). The levels do not touch the seed or the key. All
   permutations give the same stream. An omitted level equals `0`. The level
   constructor `Gen{seed, levels...}` and the `Gen{seed}.stream(levels...)`
-  member address the same stream. Each generator gives each level a value
-  range. Philox 4x gives 32 index bits to each level. Philox2x32 gives `gpu` 8
-  bits and `thread` 24 bits. SplitMix64 gives `gpu` 8 bits and `thread` 24 bits.
-  MWC64X32 gives `gpu` 7 bits and `thread` 24 bits. ChaCha gives `gpu` and
-  `thread` one 32-bit nonce half each. Xoshiro256++ has no limit. A `gpu` or
-  `thread` value above the limit stops the program in all build types: a
-  compile error in constant evaluation, `std::abort()` on the host, `__trap()`
-  in CUDA device code.
+  member address the same stream. The field widths and the stream length
+  come from the width table in `simdrng/stream_levels.hpp`. The readme lists
+  them for each generator. A level value above its max stops the program. The
+  compiler rejects it in a constant expression. The host calls `std::abort()`.
+  CUDA device code calls `__trap()`.
 - CUDA device support for the five scalar generators (`SplitMix`, `XoshiroScalar`,
   `ChaCha`, `Philox`, `MWC64X32`): `macros.hpp` defines `SIMDRNG_HD`
   (`__host__ __device__` under nvcc/hipcc, empty otherwise) and every scalar

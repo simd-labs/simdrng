@@ -63,6 +63,11 @@ pattern is to fix the seed and assign each work item a disjoint counter range:
 
    simdrng::Philox4x64SIMD rng(seed, /*counter=*/ work_item_id);
 
+The level tags (``simdrng::node``, ``simdrng::gpu``, ``simdrng::thread``) are
+jump-ahead positions in the counter. One seed gives disjoint streams. The
+levels do not touch the key. The readme lists the field widths and the
+stream length for each variant.
+
 See :ref:`gen-properties` for the full period table.
 
 References
