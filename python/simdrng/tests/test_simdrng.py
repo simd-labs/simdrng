@@ -8,6 +8,7 @@ Every generator gets the same battery of tests:
 - Pickle round-trip
 - Bulk fill correctness
 - Jump reproducibility (Xoshiro family)
+- Stream levels (node / gpu / thread)
 """
 
 from __future__ import annotations
@@ -254,6 +255,131 @@ class TestJumpN:
             by_pow2.bit_generator.random_raw(50),
             by_steps.bit_generator.random_raw(50),
         )
+
+
+# ── Stream levels (node / gpu / thread) ────────────────────────────────────
+
+# (name, kind, factory) where kind is "scalar" (full 3-level C++ stream API)
+# or "simd" (thread/gpu only via mid/long jump loops).
+STREAM_LEVEL_FACTORIES = [
+    ("Xoshiro", "scalar", lambda **kw: simdrng.Xoshiro(42, **kw)),
+    ("XoshiroSIMD", "simd", lambda **kw: simdrng.XoshiroSIMD(42, **kw)),
+    ("XoshiroNative", "simd", lambda **kw: simdrng.XoshiroNative(42, **kw)),
+]
+
+
+@pytest.fixture(
+    params=STREAM_LEVEL_FACTORIES, ids=[f[0] for f in STREAM_LEVEL_FACTORIES]
+)
+def level_factory(request):
+    return request.param
+
+
+class TestStreamLevels:
+    def test_keyword_order_gives_identical_output(self, level_factory):
+        _name, kind, factory = level_factory
+        orders = [
+            {"node": 1, "gpu": 2, "thread": 3},
+            {"thread": 3, "gpu": 2, "node": 1},
+            {"gpu": 2, "node": 1, "thread": 3},
+        ]
+        if kind == "simd":
+            orders = [
+                {"node": 0, "gpu": 2, "thread": 3},
+                {"thread": 3, "gpu": 2, "node": 0},
+                {"gpu": 2, "node": 0, "thread": 3},
+            ]
+        first = None
+        for kw in orders:
+            out = factory(**kw).random(50)
+            if first is None:
+                first = out
+            else:
+                np.testing.assert_array_equal(first, out)
+
+    def test_omitted_levels_equal_zero(self, level_factory):
+        _name, _kind, factory = level_factory
+        np.testing.assert_array_equal(
+            factory().random(50), factory(node=0, gpu=0, thread=0).random(50)
+        )
+
+    def test_distinct_values_give_distinct_output(self, level_factory):
+        _name, kind, factory = level_factory
+        base = factory().random(50)
+        with_thread = factory(thread=1).random(50)
+        with_gpu = factory(gpu=1).random(50)
+        assert not np.array_equal(base, with_thread)
+        assert not np.array_equal(base, with_gpu)
+        assert not np.array_equal(with_gpu, with_thread)
+        if kind == "scalar":
+            # node{1} vs thread{1}: distinctness of the two outer levels
+            with_node = factory(node=1).random(50)
+            assert not np.array_equal(base, with_node)
+            assert not np.array_equal(with_node, with_thread)
+
+    def test_levels_match_cpp_jump_oracle(self, level_factory):
+        _name, kind, factory = level_factory
+        if kind == "scalar":
+            # stream(node{1})/stream(gpu{1})/stream(thread{1}) must equal the
+            # fixed jump polynomials 2^191 / 2^159 / 2^127 on the same seed.
+            cases = [({"node": 1}, 191), ({"gpu": 1}, 159), ({"thread": 1}, 127)]
+            for kw, exponent in cases:
+                by_level = factory(**kw).random(50)
+                jumped = factory()
+                jumped.bit_generator.jump(simdrng.pow2(exponent))
+                np.testing.assert_array_equal(by_level, jumped.random(50))
+        else:
+            # SIMD lanes already consume the 2^128 spacing, so thread{1} is a
+            # 2^160 advance and gpu{1} is a 2^192 advance.
+            cases = [({"thread": 1}, 160), ({"gpu": 1}, 192)]
+            for kw, exponent in cases:
+                by_level = factory(**kw).random(50)
+                jumped = factory()
+                jumped.bit_generator.jump(simdrng.pow2(exponent))
+                np.testing.assert_array_equal(by_level, jumped.random(50))
+
+    def test_max_in_range_works(self, level_factory):
+        _name, kind, factory = level_factory
+        if kind == "scalar":
+            rng = factory(node=(1 << 64) - 1, gpu=(1 << 32) - 1, thread=(1 << 32) - 1)
+        else:
+            # The SIMD backends reach the C++ level via jump loops, so the full
+            # 2^32-1 max is infeasible in a unit test. A large in-range value
+            # exercises the same boundary check at the C++ level.
+            rng = factory(gpu=(1 << 16) - 1, thread=(1 << 16) - 1)
+        assert rng.random(10).shape == (10,)
+
+    def test_out_of_range_raises_valueerror(self, level_factory):
+        _name, kind, factory = level_factory
+        with pytest.raises(ValueError):
+            factory(gpu=1 << 32)
+        with pytest.raises(ValueError):
+            factory(thread=1 << 32)
+        with pytest.raises(ValueError):
+            factory(node=-1)
+        with pytest.raises(ValueError):
+            factory(gpu=-1)
+        with pytest.raises(ValueError):
+            factory(thread=-1)
+        if kind == "scalar":
+            with pytest.raises(ValueError):
+                factory(node=1 << 64)
+        else:
+            with pytest.raises(ValueError):
+                factory(node=1)
+
+    def test_cluster_keyword_is_removed(self):
+        # 'cluster' is a breaking removal with no alias: TypeError, not ValueError.
+        for maker in (
+            simdrng.Xoshiro,
+            simdrng.XoshiroSIMD,
+            simdrng.XoshiroNative,
+            simdrng.XoshiroBitGenerator,
+            simdrng.XoshiroSIMDBitGenerator,
+            simdrng.XoshiroNativeBitGenerator,
+        ):
+            with pytest.raises(TypeError):
+                maker(42, cluster=1)
 
 
 # ── Global generator ───────────────────────────────────────────────────────

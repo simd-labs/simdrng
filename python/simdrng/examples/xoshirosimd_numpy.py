@@ -1,4 +1,4 @@
-"""XoshiroSIMD with thread/cluster offsets for parallel simulations."""
+"""XoshiroSIMD with node/gpu/thread stream levels for parallel simulations."""
 
 import numpy as np
 import simdrng
@@ -12,9 +12,9 @@ def main() -> None:
         vals = rng.random(5)
         print(f"thread {i}: {vals}")
 
-    # Cluster-offset for distributed computing
-    rng = simdrng.XoshiroSIMD(seed=42, thread=0, cluster=1)
-    print(f"cluster 1: {rng.random(5)}")
+    # Gpu-offset for distributed computing (this backend has no node level)
+    rng = simdrng.XoshiroSIMD(seed=42, thread=0, gpu=1)
+    print(f"gpu 1: {rng.random(5)}")
 
 
 if __name__ == "__main__":

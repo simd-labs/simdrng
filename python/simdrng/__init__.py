@@ -200,9 +200,21 @@ class XoshiroBitGenerator(BitGeneratorBase):
     _bit_generator_name = "Xoshiro"
 
     def __init__(
-        self, seed: int, thread: int = 0, cluster: int = 0,
+        self,
+        seed: int,
+        *,
+        node: int = 0,
+        gpu: int = 0,
+        thread: int = 0,
     ) -> None:
-        super().__init__(_Xoshiro(seed, thread, cluster))
+        """Wrap the scalar Xoshiro256++ core.
+
+        The keyword-only levels ``node``, ``gpu``, and ``thread`` select a
+        hierarchical stream. Any subset in any order is accepted; omitted
+        levels equal zero. Field widths are node 64 / gpu 32 / thread 32 bits.
+        Out-of-range levels raise ``ValueError`` before the C++ core is touched.
+        """
+        super().__init__(_Xoshiro(seed, node=node, gpu=gpu, thread=thread))
 
     @classmethod
     def _from_state(cls, state: dict) -> XoshiroBitGenerator:
@@ -225,9 +237,22 @@ class XoshiroSIMDBitGenerator(BitGeneratorBase):
     _bit_generator_name = "XoshiroSIMD"
 
     def __init__(
-        self, seed: int, thread: int = 0, cluster: int = 0,
+        self,
+        seed: int,
+        *,
+        node: int = 0,
+        gpu: int = 0,
+        thread: int = 0,
     ) -> None:
-        super().__init__(_XoshiroSIMD(seed, thread, cluster))
+        """Wrap the runtime-dispatched Xoshiro256++ SIMD core.
+
+        The keyword-only levels select a hierarchical stream. SIMD lanes
+        already consume the smallest jump spacing, so ``thread`` advances
+        whole SIMD blocks by mid-jumps and ``gpu`` by long-jumps. The C++
+        core exposes no node level, so a nonzero ``node`` raises
+        ``ValueError``. Field widths are gpu 32 / thread 32 bits.
+        """
+        super().__init__(_XoshiroSIMD(seed, node=node, gpu=gpu, thread=thread))
 
     @classmethod
     def _from_state(cls, state: dict) -> XoshiroSIMDBitGenerator:
@@ -252,9 +277,21 @@ if _XoshiroNative is not None:
         _bit_generator_name = "XoshiroNative"
 
         def __init__(
-            self, seed: int, thread: int = 0, cluster: int = 0,
+            self,
+            seed: int,
+            *,
+            node: int = 0,
+            gpu: int = 0,
+            thread: int = 0,
         ) -> None:
-            super().__init__(_XoshiroNative(seed, thread, cluster))
+            """Wrap the compile-time best-arch Xoshiro256++ core.
+
+            Same stream semantics as ``XoshiroSIMDBitGenerator``:
+            ``thread`` is a mid-jump, ``gpu`` is a long-jump, and a nonzero
+            ``node`` raises ``ValueError`` because the C++ core has no node
+            level. Field widths are gpu 32 / thread 32 bits.
+            """
+            super().__init__(_XoshiroNative(seed, node=node, gpu=gpu, thread=thread))
 
         @classmethod
         def _from_state(cls, state: dict) -> XoshiroNativeBitGenerator:
@@ -441,25 +478,46 @@ def SplitMix(seed: int) -> np.random.Generator:
     return Generator(SplitMixBitGenerator(seed))
 
 
-def Xoshiro(seed: int, thread: int = 0, cluster: int = 0) -> np.random.Generator:
-    """Return ``np.random.Generator`` backed by scalar Xoshiro256++."""
-    return Generator(XoshiroBitGenerator(seed, thread, cluster))
+def Xoshiro(
+    seed: int, *, node: int = 0, gpu: int = 0, thread: int = 0
+) -> np.random.Generator:
+    """Return ``np.random.Generator`` backed by scalar Xoshiro256++.
+
+    Keyword-only stream levels in any order; omitted levels equal 0.
+    """
+    return Generator(XoshiroBitGenerator(seed, node=node, gpu=gpu, thread=thread))
 
 
 def XoshiroSIMD(
-    seed: int, thread: int = 0, cluster: int = 0,
+    seed: int,
+    *,
+    node: int = 0,
+    gpu: int = 0,
+    thread: int = 0,
 ) -> np.random.Generator:
-    """Return ``np.random.Generator`` backed by XoshiroSIMD (runtime SIMD dispatch)."""
-    return Generator(XoshiroSIMDBitGenerator(seed, thread, cluster))
+    """Return ``np.random.Generator`` backed by XoshiroSIMD (runtime SIMD dispatch).
+
+    Keyword-only stream levels in any order; omitted levels equal 0.
+    ``node`` must be 0 on this backend.
+    """
+    return Generator(XoshiroSIMDBitGenerator(seed, node=node, gpu=gpu, thread=thread))
 
 
 def XoshiroNative(
-    seed: int, thread: int = 0, cluster: int = 0,
+    seed: int,
+    *,
+    node: int = 0,
+    gpu: int = 0,
+    thread: int = 0,
 ) -> np.random.Generator:
-    """Return ``np.random.Generator`` backed by XoshiroNative (compile-time best arch)."""
+    """Return ``np.random.Generator`` backed by XoshiroNative (compile-time best arch).
+
+    Keyword-only stream levels in any order; omitted levels equal 0.
+    ``node`` must be 0 on this backend.
+    """
     if _XoshiroNative is None:
         raise RuntimeError("XoshiroNative not available on this platform")
-    return Generator(XoshiroNativeBitGenerator(seed, thread, cluster))
+    return Generator(XoshiroNativeBitGenerator(seed, node=node, gpu=gpu, thread=thread))
 
 
 def ChaCha8(
