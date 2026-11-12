@@ -144,35 +144,61 @@ namespace {
 
 constexpr std::uint64_t kStreamSeed = 0x0102030405060708ULL;
 
-// The stream index sits in the top 64 counter bits: gpu in the high 32 index
-// bits, thread in the low 32. The low words are the per-thread position.
-simdrng::Philox4x32::counter_type expected_counter(std::uint64_t gpu_v, std::uint64_t thread_v) {
-  simdrng::Philox4x32::counter_type ctr{};
-  ctr[2] = static_cast<std::uint32_t>(thread_v);
-  ctr[3] = static_cast<std::uint32_t>(gpu_v);
+// The literal counter block for a level tuple: node * 2^a + gpu * 2^b +
+// thread * 2^c counter blocks, spelled per variant from the width table in
+// detail::stream_widths (64-bit counter: shifts 56/48/24, block 2^24;
+// 128-bit counters: shifts 112/96/64, block 2^64; 256-bit counter: shifts
+// 192/128/64, block 2^64). The low words are the position inside the block.
+template <class G> auto expected_stream_counter(std::uint64_t node_v, std::uint64_t gpu_v, std::uint64_t thread_v) {
+  using counter_t = typename G::counter_type;
+  using word_t = typename G::word_type;
+  counter_t ctr{};
+  if constexpr (counter_t{}.size() == 2 && sizeof(word_t) == 4) {
+    // Philox2x32: distance = node * 2^56 + gpu * 2^48 + thread * 2^24.
+    ctr[0] = static_cast<word_t>(thread_v << 24);
+    ctr[1] = static_cast<word_t>((thread_v >> 8) | (gpu_v << 16) | (node_v << 24));
+  } else if constexpr (counter_t{}.size() == 4 && sizeof(word_t) == 4) {
+    // Philox4x32: distance = node * 2^112 + gpu * 2^96 + thread * 2^64.
+    ctr[2] = static_cast<word_t>(thread_v);
+    ctr[3] = static_cast<word_t>(gpu_v | (node_v << 16));
+  } else if constexpr (counter_t{}.size() == 2) {
+    // Philox2x64: distance = node * 2^112 + gpu * 2^96 + thread * 2^64.
+    ctr[1] = static_cast<word_t>(thread_v | (gpu_v << 32) | (node_v << 48));
+  } else {
+    // Philox4x64: distance = node * 2^192 + gpu * 2^128 + thread * 2^64.
+    ctr[1] = static_cast<word_t>(thread_v);
+    ctr[2] = static_cast<word_t>(gpu_v);
+    ctr[3] = static_cast<word_t>(node_v);
+  }
   return ctr;
 }
 
-// The stream layout the stream tests check, for every Philox variant: the
-// index takes the top 64 counter bits (the top 32 for Philox2x32, split gpu 8
-// / thread 24).
-template <class G> auto expected_stream_counter(std::uint64_t gpu_v, std::uint64_t thread_v) {
+// The largest value that fits the node/gpu fields of one variant.
+template <class G> constexpr std::uint64_t max_node() {
   using counter_t = typename G::counter_type;
-  using word_t = typename G::word_type;
-  constexpr std::size_t n = counter_t{}.size();
-  counter_t ctr{};
-  if constexpr (n == 2 && sizeof(word_t) == 4) {
-    // Philox2x32: the index fills the top 32-bit word, gpu 8 / thread 24 bits.
-    ctr[1] = static_cast<word_t>((gpu_v << 24) | thread_v);
-  } else if (n == 4 && sizeof(word_t) == 4) {
-    // Philox4x32: the index fills the top 64 counter bits (gpu high 32 / thread low 32).
-    ctr[2] = static_cast<word_t>(thread_v);
-    ctr[3] = static_cast<word_t>(gpu_v);
+  if constexpr (counter_t{}.size() == 2 && sizeof(typename G::word_type) == 4) {
+    return 255;
+  } else if constexpr (counter_t{}.size() == 4 && sizeof(typename G::word_type) == 4) {
+    return 0xFFFF;
+  } else if constexpr (counter_t{}.size() == 2) {
+    return 0xFFFF;
   } else {
-    // Philox2x64 / Philox4x64: the index fills the top 64-bit word.
-    ctr[n - 1] = static_cast<word_t>((gpu_v << 32) | thread_v);
+    return 0xFFFFFFFFFFFFFFFFULL;
   }
-  return ctr;
+}
+
+// The largest value that fits the thread field of one variant.
+template <class G> constexpr std::uint64_t max_thread() {
+  using counter_t = typename G::counter_type;
+  if constexpr (counter_t{}.size() == 2 && sizeof(typename G::word_type) == 4) {
+    return 0xFFFFFF;
+  } else if constexpr (counter_t{}.size() == 4 && sizeof(typename G::word_type) == 4) {
+    return 0xFFFFFFFFULL;
+  } else if constexpr (counter_t{}.size() == 2) {
+    return 0xFFFFFFFFULL;
+  } else {
+    return 0xFFFFFFFFFFFFFFFFULL;
+  }
 }
 
 } // namespace
@@ -181,14 +207,47 @@ template <class G> auto expected_stream_counter(std::uint64_t gpu_v, std::uint64
 static_assert(simdrng::Philox4x32{kStreamSeed}.stream(simdrng::thread{3})() !=
               simdrng::Philox4x32{kStreamSeed}.stream(simdrng::thread{4})());
 
-TEST_CASE("Philox4x32 stream counter words hold the gpu and thread levels", "[philox][stream]") {
-  for (const std::uint64_t g : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{5}, std::uint64_t{1} << 8}) {
-    for (const std::uint64_t t : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{8}, std::uint64_t{1} << 20}) {
-      INFO("gpu: " << g << " thread: " << t);
-      REQUIRE(simdrng::Philox4x32{kStreamSeed}.stream(simdrng::gpu{g}, simdrng::thread{t}).getCounter() ==
-              expected_counter(g, t));
+TEMPLATE_TEST_CASE("Philox stream counter holds the level tuple at the field shifts", "[philox][stream]",
+                   simdrng::Philox4x32, simdrng::Philox2x32, simdrng::Philox4x64, simdrng::Philox2x64) {
+  using G = TestType;
+  const auto mn = max_node<G>();
+  const auto mt = max_thread<G>();
+  for (const std::uint64_t n : {std::uint64_t{0}, std::uint64_t{1}, mn}) {
+    for (const std::uint64_t g : {std::uint64_t{0}, std::uint64_t{1}, mn}) {
+      for (const std::uint64_t t : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 20, mt}) {
+        INFO("node: " << n << " gpu: " << g << " thread: " << t);
+        REQUIRE(G{kStreamSeed}.stream(simdrng::node{n}, simdrng::gpu{g}, simdrng::thread{t}).getCounter() ==
+                expected_stream_counter<G>(n, g, t));
+      }
     }
   }
+}
+
+TEMPLATE_TEST_CASE("Philox stream(level{v}) equals the plain generator advanced v * 2^field blocks", "[philox][stream]",
+                   simdrng::Philox4x32, simdrng::Philox2x32, simdrng::Philox4x64, simdrng::Philox2x64) {
+  using G = TestType;
+  for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{7}}) {
+    INFO("v: " << v);
+    const auto thread_ref = G{G::seed_to_key(kStreamSeed), expected_stream_counter<G>(0, 0, v)};
+    REQUIRE(stream_level_contract::draw64(G{kStreamSeed}.stream(simdrng::thread{v})) ==
+            stream_level_contract::draw64(thread_ref));
+    const auto gpu_ref = G{G::seed_to_key(kStreamSeed), expected_stream_counter<G>(0, v, 0)};
+    REQUIRE(stream_level_contract::draw64(G{kStreamSeed}.stream(simdrng::gpu{v})) ==
+            stream_level_contract::draw64(gpu_ref));
+    const auto node_ref = G{G::seed_to_key(kStreamSeed), expected_stream_counter<G>(v, 0, 0)};
+    REQUIRE(stream_level_contract::draw64(G{kStreamSeed}.stream(simdrng::node{v})) ==
+            stream_level_contract::draw64(node_ref));
+  }
+}
+
+TEMPLATE_TEST_CASE("Philox one-level streams compose into the tuple stream", "[philox][stream]", simdrng::Philox4x32,
+                   simdrng::Philox2x32, simdrng::Philox4x64, simdrng::Philox2x64) {
+  using G = TestType;
+  const auto composed = G{kStreamSeed}.stream(simdrng::node{5}).stream(simdrng::gpu{6}).stream(simdrng::thread{7});
+  REQUIRE(composed.getCounter() ==
+          G{kStreamSeed}.stream(simdrng::node{5}, simdrng::gpu{6}, simdrng::thread{7}).getCounter());
+  REQUIRE(stream_level_contract::draw64(composed) ==
+          stream_level_contract::draw64(G{kStreamSeed}.stream(simdrng::thread{7}, simdrng::node{5}, simdrng::gpu{6})));
 }
 
 TEST_CASE("Philox4x32 stream draws only advance the low counter words", "[philox][stream]") {
@@ -198,89 +257,31 @@ TEST_CASE("Philox4x32 stream draws only advance the low counter words", "[philox
     for (int k = 0; k < 16; ++k) {
       s();
     }
-    // 16 outputs = 8 blocks: position 8 in the low word, index words unchanged.
-    auto expected = expected_counter(0, i);
+    // 16 outputs = 8 blocks: position 8 in the low word, level words unchanged.
+    auto expected = expected_stream_counter<simdrng::Philox4x32>(0, 0, i);
     expected[0] = 8;
     REQUIRE(s.getCounterForSerde() == expected);
   }
 }
 
-TEST_CASE("Philox4x32 adjacent thread streams share no value", "[philox][stream]") {
+TEMPLATE_TEST_CASE("Philox adjacent thread streams share no value", "[philox][stream]", simdrng::Philox4x32,
+                   simdrng::Philox2x32, simdrng::Philox4x64, simdrng::Philox2x64) {
+  using G = TestType;
   for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 20}) {
     INFO("i: " << i);
-    auto a = simdrng::Philox4x32{kStreamSeed}.stream(simdrng::thread{i});
-    auto b = simdrng::Philox4x32{kStreamSeed}.stream(simdrng::thread{i + 1});
-    std::array<std::uint64_t, 64> oa{}, ob{};
-    for (auto &v : oa) {
-      v = a();
-    }
-    for (auto &v : ob) {
-      v = b();
-    }
+    const auto a = stream_level_contract::draw64(G{kStreamSeed}.stream(simdrng::thread{i}));
+    const auto b = stream_level_contract::draw64(G{kStreamSeed}.stream(simdrng::thread{i + 1}));
     int shared = 0;
-    for (const auto xv : oa) {
-      for (const auto yv : ob) {
-        shared += (xv == yv);
+    for (const auto x : a) {
+      for (const auto y : b) {
+        shared += (x == y);
       }
     }
     REQUIRE(shared == 0);
   }
 }
 
-TEMPLATE_TEST_CASE("Philox stream counter holds the levels in the top counter half", "[philox][stream]",
-                   simdrng::Philox4x32, simdrng::Philox2x32, simdrng::Philox4x64, simdrng::Philox2x64) {
-  using G = TestType;
-  // Philox2x32 splits its 32-bit index word gpu 8 / thread 24; the other
-  // variants give each level 32 bits of the 64-bit index.
-  constexpr bool narrow = G::RESULTS_PER_BLOCK == 1;
-  const std::uint64_t max_gpu = narrow ? (std::uint64_t{1} << 8) - 1 : (std::uint64_t{1} << 31);
-  const std::uint64_t max_thread = narrow ? (std::uint64_t{1} << 24) - 1 : (std::uint64_t{1} << 31);
-  for (const std::uint64_t g : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 4, max_gpu}) {
-    for (const std::uint64_t t : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 20, max_thread}) {
-      INFO("gpu: " << g << " thread: " << t);
-      REQUIRE(G{kStreamSeed}.stream(simdrng::gpu{g}, simdrng::thread{t}).getCounter() ==
-              expected_stream_counter<G>(g, t));
-    }
-  }
-}
-
-TEMPLATE_TEST_CASE("Philox level (0, 0) and (0, 1) share no value in their first 64 draws", "[philox][stream]",
-                   simdrng::Philox4x32, simdrng::Philox2x32, simdrng::Philox4x64, simdrng::Philox2x64) {
-  using G = TestType;
-  const G base{kStreamSeed};
-  auto a = base.stream();
-  auto b = base.stream(simdrng::thread{1});
-  std::array<std::uint64_t, 64> oa{}, ob{};
-  for (auto &v : oa) {
-    v = a();
-  }
-  for (auto &v : ob) {
-    v = b();
-  }
-  int shared = 0;
-  for (const auto x : oa) {
-    for (const auto y : ob) {
-      shared += (x == y);
-    }
-  }
-  REQUIRE(shared == 0);
-}
-
-TEST_CASE("philox2x32 max in-range levels match pinned head output", "[philox][stream]") {
-  // gpu 8 bits (255) and thread 24 bits (0xFFFFFF) are the largest values
-  // that fit the 32-bit stream index. The draws are pinned to the output of
-  // HEAD 16d018c at seed 0x0102030405060708; the range checks must not move
-  // any in-range output.
-  constexpr std::uint64_t expected[] = {0x6b6228c7b516bda7ULL, 0xb21e4770535ff495ULL, 0xcaf698831d690585ULL,
-                                        0x7fd3d9d3a9506ffdULL, 0xc44ab13eb079461cULL, 0x9dac4dd7c2eaff63ULL,
-                                        0xecde951f7f1d4478ULL, 0x0a92e7cc74580801ULL};
-  auto g = simdrng::Philox2x32{kStreamSeed}.stream(simdrng::gpu{255}, simdrng::thread{0xFFFFFFULL});
-  for (const auto want : expected) {
-    REQUIRE(g() == want);
-  }
-}
-
-TEST_CASE("Philox2x32 stream 0 second draw differs from stream 1 first draw", "[philox][stream]") {
+TEST_CASE("philox2x32 stream 0 second draw differs from stream 1 first draw", "[philox][stream]") {
   using G = simdrng::Philox2x32;
   const G base{kStreamSeed};
   auto s0 = base.stream();
@@ -288,6 +289,24 @@ TEST_CASE("Philox2x32 stream 0 second draw differs from stream 1 first draw", "[
   const auto s0_second = s0();
   const auto s1_first = base.stream(simdrng::thread{1})();
   REQUIRE(s0_second != s1_first);
+}
+
+TEST_CASE("philox sol regression: folded-node alias pairs now differ", "[philox][stream]") {
+  // Sol review pairs at seed 42: Philox2x32 nodes 0xf8364607e9c949bd and
+  // 0x575d4575a1ecca9a produced one key, and node 0x61c8864680b583eb aliased
+  // node 0 on Philox4x32 and Philox2x64. The raw node values are past the
+  // node field (8 bits for Philox2x32, 16 bits for the 128-bit counters) and
+  // stop the program there. The regression maps them into the field and
+  // requires distinct streams.
+  constexpr std::uint64_t kPairA = 0xf8364607e9c949bdULL & 0xFF;
+  constexpr std::uint64_t kPairB = 0x575d4575a1ecca9aULL & 0xFF;
+  constexpr std::uint64_t kInvZero = 0x61c8864680b583ebULL & 0xFFFF;
+  REQUIRE(stream_level_contract::draw64(simdrng::Philox2x32{42}.stream(simdrng::node{kPairA})) !=
+          stream_level_contract::draw64(simdrng::Philox2x32{42}.stream(simdrng::node{kPairB})));
+  REQUIRE(stream_level_contract::draw64(simdrng::Philox4x32{42}.stream(simdrng::node{kInvZero})) !=
+          stream_level_contract::draw64(simdrng::Philox4x32{42}.stream(simdrng::node{0})));
+  REQUIRE(stream_level_contract::draw64(simdrng::Philox2x64{42}.stream(simdrng::node{kInvZero})) !=
+          stream_level_contract::draw64(simdrng::Philox2x64{42}.stream(simdrng::node{0})));
 }
 
 TEMPLATE_TEST_CASE("Philox stream level contract", "[philox][stream]", simdrng::Philox4x32, simdrng::Philox2x32,

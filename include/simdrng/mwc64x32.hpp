@@ -70,14 +70,14 @@ public:
       : MWC64X32(MWC64X32{seed}.stream(levels...)) {}
 
   /**
-   * @brief Hierarchical stream selection. node{n} XORs a SplitMix expansion of
-   * n into the (x, c) seed state before the index jump (node{0} is the
-   * identity), the same fold SplitMix, Philox and ChaCha apply. gpu takes 7 and
-   * thread 24 bits of the stream index (gpu in the high half; an out-of-range
-   * value fails hard in every build type), so the index stays below 2^31 and
-   * each of the 2^31 streams spans 2^32 values within the ~2^63 period. The
-   * generator at index i starts at the base state jumped by i * 2^32 outputs,
-   * computed in O(log i) as (A1^(2^32))^i mod MOD. O(1).
+   * @brief Hierarchical stream selection. The levels select a position in the
+   * one sequence the seed defines and never touch the (x, c) seed state. The
+   * tuple maps to the jump distance node * 2^56 + gpu * 2^48 + thread * 2^24
+   * in the field layout detail::widths_tight (node 8 / gpu 8 / thread 24
+   * bits). The stream starts at that distance, computed as A1^distance mod MOD
+   * in O(log distance). Each stream owns the 2^24 consecutive values from its
+   * start within the period, so streams are disjoint. A level value past its
+   * field fails hard in every build type (never an alias).
    * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
@@ -85,41 +85,9 @@ public:
     requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr MWC64X32 stream(Levels... levels) const noexcept {
     MWC64X32 g = *this;
-    if constexpr (detail::has_level_v<node, Levels...>) {
-      const std::uint64_t n = detail::pick_level<node>(levels...).value;
-      if (n != 0) {
-        std::uint64_t s = (static_cast<std::uint64_t>(g.m_c) << 32) | g.m_x;
-        s ^= detail::mix64(n);
-        if (s >= MOD) {
-          s -= MOD; // one subtraction keeps the state in [0, MOD): MOD > 2^63
-        }
-        if (s == 0) {
-          // Exactly one n lands on the degenerate residue 0. Reuse the seed
-          // guard there: c = 1 with a mixed x is a valid state for every n.
-          g.m_c = 1;
-          g.m_x = static_cast<result_type>(detail::mix64(n));
-        } else {
-          g.m_x = static_cast<result_type>(s);
-          g.m_c = static_cast<result_type>(s >> 32);
-        }
-      }
-    }
-    std::uint64_t gpu_v = 0;
-    std::uint64_t thread_v = 0;
-    if constexpr (detail::has_level_v<gpu, Levels...>) {
-      gpu_v = detail::pick_level<gpu>(levels...).value;
-    }
-    if constexpr (detail::has_level_v<thread, Levels...>) {
-      thread_v = detail::pick_level<thread>(levels...).value;
-    }
-    assert(gpu_v < (std::uint64_t{1} << 7) && "gpu value overflows its stream-index field");
-    assert(thread_v < (std::uint64_t{1} << 24) && "thread value overflows its stream-index field");
-    if (gpu_v >= (std::uint64_t{1} << 7) || thread_v >= (std::uint64_t{1} << 24)) [[unlikely]] {
-      detail::stream_level_out_of_range();
-    }
-    const std::uint64_t index = (gpu_v << 24) | thread_v;
-    if (index != 0) {
-      g.jump_mul(powmod(JUMP_MUL, index));
+    const std::uint64_t distance = detail::level_distance64(detail::widths_tight, levels...);
+    if (distance != 0) {
+      g.jump(distance);
     }
     return g;
   }

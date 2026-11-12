@@ -73,17 +73,49 @@ constexpr std::array<ChaCha20::matrix_word, 8> kStreamKey = {0x01020304, 0x05060
 static_assert(ChaCha20{kStreamKey, 0, 0}.stream(simdrng::thread{3})() !=
               ChaCha20{kStreamKey, 0, 0}.stream(simdrng::thread{4})());
 
-TEST_CASE("ChaCha stream nonce halves hold the gpu and thread levels", "[chacha][stream]") {
-  for (const std::uint64_t g : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{5}, std::uint64_t{1} << 20}) {
-    for (const std::uint64_t t : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{8}, std::uint64_t{1} << 20}) {
+namespace {
+
+// detail::widths_tight: block 2^24 counter blocks (thread shift 24), gpu
+// shift 48, node shift 56.
+constexpr std::uint64_t kBlock = std::uint64_t{1} << 24;
+constexpr std::uint64_t kStreamNonce = 0x1122334455667788ULL;
+
+} // namespace
+
+TEST_CASE("ChaCha counter holds the levels and the key and nonce stay put", "[chacha][stream]") {
+  for (const std::uint64_t g : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{5}, std::uint64_t{255}}) {
+    for (const std::uint64_t t : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{8}, std::uint64_t{0xFFFFFF}}) {
       INFO("gpu: " << g << " thread: " << t);
-      const auto st = ChaCha20{kStreamKey, 0, 0}.stream(simdrng::gpu{g}, simdrng::thread{t}).getState();
-      REQUIRE(st[12] == 0);
-      REQUIRE(st[13] == 0);
-      REQUIRE(st[14] == static_cast<std::uint32_t>(t));
-      REQUIRE(st[15] == static_cast<std::uint32_t>(g));
+      const auto st = ChaCha20{kStreamKey, 0, kStreamNonce}.stream(simdrng::gpu{g}, simdrng::thread{t}).getState();
+      // distance = g * 2^48 + t * 2^24 in the counter; the nonce is the user's.
+      REQUIRE(st[12] == static_cast<std::uint32_t>(t << 24));
+      REQUIRE(st[13] == static_cast<std::uint32_t>((t >> 8) | (g << 16)));
+      REQUIRE(st[14] == 0x55667788U);
+      REQUIRE(st[15] == 0x11223344U);
+      for (int i = 0; i < 8; ++i) {
+        REQUIRE(st[4 + i] == kStreamKey[static_cast<std::size_t>(i)]);
+      }
     }
   }
+}
+
+TEST_CASE("ChaCha stream(level{v}) equals the plain generator advanced v * 2^field blocks", "[chacha][stream]") {
+  for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{7}}) {
+    INFO("v: " << v);
+    REQUIRE(stream_level_contract::draw64(ChaCha20{kStreamKey, 0, 0}.stream(simdrng::thread{v})) ==
+            stream_level_contract::draw64(ChaCha20{kStreamKey, v * kBlock, 0}));
+    REQUIRE(stream_level_contract::draw64(ChaCha20{kStreamKey, 0, 0}.stream(simdrng::gpu{v})) ==
+            stream_level_contract::draw64(ChaCha20{kStreamKey, v * (std::uint64_t{1} << 48), 0}));
+    REQUIRE(stream_level_contract::draw64(ChaCha20{kStreamKey, 0, 0}.stream(simdrng::node{v})) ==
+            stream_level_contract::draw64(ChaCha20{kStreamKey, v * (std::uint64_t{1} << 56), 0}));
+  }
+}
+
+TEST_CASE("ChaCha one-level streams compose into the tuple stream", "[chacha][stream]") {
+  const auto composed =
+      ChaCha20{kStreamKey, 0, 0}.stream(simdrng::node{5}).stream(simdrng::gpu{6}).stream(simdrng::thread{7});
+  const auto tuple = ChaCha20{kStreamKey, 0, 0}.stream(simdrng::thread{7}, simdrng::node{5}, simdrng::gpu{6});
+  REQUIRE(stream_level_contract::draw64(composed) == stream_level_contract::draw64(tuple));
 }
 
 TEST_CASE("ChaCha stream draws only advance the counter", "[chacha][stream]") {
@@ -93,11 +125,11 @@ TEST_CASE("ChaCha stream draws only advance the counter", "[chacha][stream]") {
     for (int k = 0; k < 16; ++k) {
       s();
     }
-    // 16 outputs = 2 blocks: counter word 2, nonce words unchanged.
+    // 16 outputs = 2 blocks: counter 2 past the stream start, nonce unchanged.
     const auto st = s.getState();
-    REQUIRE(st[12] == 2);
-    REQUIRE(st[13] == 0);
-    REQUIRE(st[14] == static_cast<std::uint32_t>(i));
+    REQUIRE(st[12] == static_cast<std::uint32_t>((i << 24) + 2));
+    REQUIRE(st[13] == static_cast<std::uint32_t>(i >> 8));
+    REQUIRE(st[14] == 0);
     REQUIRE(st[15] == 0);
   }
 }
@@ -105,18 +137,11 @@ TEST_CASE("ChaCha stream draws only advance the counter", "[chacha][stream]") {
 TEST_CASE("ChaCha adjacent thread streams share no value", "[chacha][stream]") {
   for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 20}) {
     INFO("i: " << i);
-    auto a = ChaCha20{kStreamKey, 0, 0}.stream(simdrng::thread{i});
-    auto b = ChaCha20{kStreamKey, 0, 0}.stream(simdrng::thread{i + 1});
-    std::array<std::uint64_t, 64> oa{}, ob{};
-    for (auto &v : oa) {
-      v = a();
-    }
-    for (auto &v : ob) {
-      v = b();
-    }
+    const auto a = stream_level_contract::draw64(ChaCha20{kStreamKey, 0, 0}.stream(simdrng::thread{i}));
+    const auto b = stream_level_contract::draw64(ChaCha20{kStreamKey, 0, 0}.stream(simdrng::thread{i + 1}));
     int shared = 0;
-    for (const auto xv : oa) {
-      for (const auto yv : ob) {
+    for (const auto xv : a) {
+      for (const auto yv : b) {
         shared += (xv == yv);
       }
     }
@@ -124,19 +149,20 @@ TEST_CASE("ChaCha adjacent thread streams share no value", "[chacha][stream]") {
   }
 }
 
+TEST_CASE("chacha max in-range levels work and stay distinct", "[chacha][stream]") {
+  // node 8 bits (255), gpu 8 bits (255) and thread 24 bits (0xFFFFFF) are the
+  // largest values that fit their fields.
+  constexpr std::uint64_t max_distance =
+      (std::uint64_t{255} << 56) | (std::uint64_t{255} << 48) | (std::uint64_t{0xFFFFFF} << 24);
+  const auto maxed =
+      ChaCha20{kStreamKey, 0, 0}.stream(simdrng::node{255}, simdrng::gpu{255}, simdrng::thread{0xFFFFFFULL});
+  REQUIRE(stream_level_contract::draw64(maxed) == stream_level_contract::draw64(ChaCha20{kStreamKey, max_distance, 0}));
+  const auto below =
+      ChaCha20{kStreamKey, 0, 0}.stream(simdrng::node{255}, simdrng::gpu{255}, simdrng::thread{0xFFFFFEULL});
+  REQUIRE(stream_level_contract::draw64(maxed) != stream_level_contract::draw64(below));
+}
+
 TEST_CASE("ChaCha stream level contract", "[chacha][stream]") {
   stream_level_contract::check_stream_levels<ChaCha20>(
       [](auto... levels) { return ChaCha20{kStreamKey, 0, 0}.stream(levels...); });
-}
-
-TEST_CASE("chacha max in-range levels match pinned head output", "[chacha][stream]") {
-  // gpu and thread each hold one 32-bit nonce half (0xFFFFFFFF), the largest
-  // values that fit. The draws are pinned to the output of HEAD 911f82b at
-  // key kStreamKey; the release range check must not move any in-range output.
-  constexpr std::uint64_t expected[] = {0x598b8890720aeaddULL, 0xb24705df9756a5e1ULL, 0xa955dfa46e2f6ccbULL,
-                                        0xb4b4d208476e53c6ULL};
-  auto g = ChaCha20{kStreamKey, 0, 0}.stream(simdrng::gpu{0xFFFFFFFFULL}, simdrng::thread{0xFFFFFFFFULL});
-  for (const auto want : expected) {
-    REQUIRE(g() == want);
-  }
 }

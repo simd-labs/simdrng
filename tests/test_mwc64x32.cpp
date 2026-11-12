@@ -116,59 +116,75 @@ static_assert(simdrng::MWC64X32{42}.stream().getState() == simdrng::MWC64X32(42)
 static_assert(simdrng::MWC64X32::min() == std::numeric_limits<simdrng::MWC64X32::result_type>::min());
 static_assert(simdrng::MWC64X32::max() == std::numeric_limits<simdrng::MWC64X32::result_type>::max());
 
-TEST_CASE("mwc64x32 stream thread{i} equals i jumps", "[mwc64x32][stream]") {
+namespace {
+
+constexpr std::uint64_t kStreamSeed = 0x0102030405060708ULL;
+// detail::widths_tight: block 2^24 outputs (thread shift 24), gpu shift 48,
+// node shift 56.
+constexpr std::uint64_t kBlock = std::uint64_t{1} << 24;
+
+// The plain generator advanced by exactly n outputs, via the generator's own
+// jump machinery (jump(n) is exact, the C reference jump_n pins it above).
+simdrng::MWC64X32 advanced_by(simdrng::MWC64X32 g, std::uint64_t outputs) {
+  g.jump(outputs);
+  return g;
+}
+
+} // namespace
+
+TEST_CASE("mwc64x32 stream thread{v} equals jump(v * 2^24)", "[mwc64x32][stream]") {
   for (const std::uint64_t seed : kSeeds) {
-    for (std::uint64_t i = 0; i <= 8; ++i) {
-      INFO("seed: " << seed << " i: " << i);
-      simdrng::MWC64X32 by_jumps(seed);
-      for (std::uint64_t j = 0; j < i; ++j) {
-        by_jumps.jump();
-      }
-      REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::thread{i}).getState() == by_jumps.getState());
+    for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{3}, std::uint64_t{0xFFFFFF}}) {
+      INFO("seed: " << seed << " v: " << v);
+      REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::thread{v}).getState() ==
+              advanced_by(simdrng::MWC64X32{seed}, v * kBlock).getState());
     }
   }
 }
 
-TEST_CASE("mwc64x32 stream gpu{v} equals v jumps of 2^56 outputs", "[mwc64x32][stream]") {
-  // gpu sits in the high 7 index bits: index v << 24, and one index unit
-  // spans 2^32 outputs, so gpu{v} skips v * 2^56 outputs. A thread value of
-  // v << 24 would exceed the 24-bit thread field, so the identity is stated
-  // as a jump instead.
+TEST_CASE("mwc64x32 stream gpu{v} equals jump(v * 2^48)", "[mwc64x32][stream]") {
   for (const std::uint64_t seed : kSeeds) {
-    INFO("seed: " << seed);
-    for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{2}, std::uint64_t{127}}) {
-      INFO("v: " << v);
-      simdrng::MWC64X32 jumped(seed);
-      jumped.jump(v << 56);
-      REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::gpu{v}).getState() == jumped.getState());
+    for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{3}, std::uint64_t{255}}) {
+      INFO("seed: " << seed << " v: " << v);
+      REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::gpu{v}).getState() ==
+              advanced_by(simdrng::MWC64X32{seed}, v * (std::uint64_t{1} << 48)).getState());
+    }
+  }
+}
+
+TEST_CASE("mwc64x32 stream node{v} equals jump(v * 2^56)", "[mwc64x32][stream]") {
+  for (const std::uint64_t seed : kSeeds) {
+    for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{3}, std::uint64_t{255}}) {
+      INFO("seed: " << seed << " v: " << v);
+      REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::node{v}).getState() ==
+              advanced_by(simdrng::MWC64X32{seed}, v * (std::uint64_t{1} << 56)).getState());
     }
   }
 }
 
 TEST_CASE("mwc64x32 stream composition at large thread level", "[mwc64x32][stream]") {
+  // Composing two smaller jumps: thread{i + 3} is thread{i} plus 3 blocks.
   const std::uint64_t i = std::uint64_t{1} << 20;
-  simdrng::MWC64X32 advanced = simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i});
-  advanced.jump();
-  advanced.jump();
-  advanced.jump();
+  const auto advanced = advanced_by(simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i}), 3 * kBlock);
   REQUIRE(simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i + 3}).getState() == advanced.getState());
+}
+
+TEST_CASE("mwc64x32 adjacent thread streams tile at the block boundary", "[mwc64x32][stream]") {
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 20}) {
+    INFO("i: " << i);
+    const auto end_of_block = advanced_by(simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i}), kBlock);
+    REQUIRE(simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i + 1}).getState() == end_of_block.getState());
+  }
 }
 
 TEST_CASE("mwc64x32 adjacent thread streams share no value", "[mwc64x32][stream]") {
   for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 20}) {
     INFO("i: " << i);
-    auto a = simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i});
-    auto b = simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i + 1});
-    std::array<std::uint32_t, 64> oa{}, ob{};
-    for (auto &v : oa) {
-      v = a();
-    }
-    for (auto &v : ob) {
-      v = b();
-    }
+    const auto a = stream_level_contract::draw64(simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i}));
+    const auto b = stream_level_contract::draw64(simdrng::MWC64X32{kSeeds[0]}.stream(simdrng::thread{i + 1}));
     int shared = 0;
-    for (const auto xv : oa) {
-      for (const auto yv : ob) {
+    for (const auto xv : a) {
+      for (const auto yv : b) {
         shared += (xv == yv);
       }
     }
@@ -176,67 +192,35 @@ TEST_CASE("mwc64x32 adjacent thread streams share no value", "[mwc64x32][stream]
   }
 }
 
-TEST_CASE("mwc64x32 max in-range levels match pinned head output", "[mwc64x32][stream]") {
-  // gpu 7 bits (127) and thread 24 bits (0xFFFFFF) are the largest values
-  // that fit the 31-bit stream index. The draws are pinned to the output of
-  // HEAD 16d018c at seed 0x0102030405060708; the range checks must not move
-  // any in-range output.
-  constexpr std::uint64_t kPinSeed = 0x0102030405060708ULL;
-  constexpr std::uint32_t expected[] = {0x4b55e49cU, 0x52cc8e4dU, 0x589d0323U, 0x5f21797fU,
-                                        0xa97797abU, 0x4e1f27a6U, 0x72397c26U, 0x94aeec91U};
-  auto g = simdrng::MWC64X32{kPinSeed}.stream(simdrng::gpu{127}, simdrng::thread{0xFFFFFFULL});
-  for (const auto want : expected) {
-    REQUIRE(g() == want);
-  }
+TEST_CASE("mwc64x32 max in-range levels work and stay distinct", "[mwc64x32][stream]") {
+  // node 8 bits (255), gpu 8 bits (255) and thread 24 bits (0xFFFFFF) are the
+  // largest values that fit their fields.
+  constexpr std::uint64_t max_distance =
+      (std::uint64_t{255} << 56) | (std::uint64_t{255} << 48) | (std::uint64_t{0xFFFFFF} << 24);
+  const auto maxed =
+      simdrng::MWC64X32{kStreamSeed}.stream(simdrng::node{255}, simdrng::gpu{255}, simdrng::thread{0xFFFFFFULL});
+  REQUIRE(maxed.getState() == advanced_by(simdrng::MWC64X32{kStreamSeed}, max_distance).getState());
+  const auto below =
+      simdrng::MWC64X32{kStreamSeed}.stream(simdrng::node{255}, simdrng::gpu{255}, simdrng::thread{0xFFFFFEULL});
+  REQUIRE(stream_level_contract::draw64(maxed) != stream_level_contract::draw64(below));
+}
+
+TEST_CASE("mwc64x32 sol regression: fallback and reduction node pairs now differ", "[mwc64x32][stream]") {
+  // Sol review pairs at seed 42: node 0xd63e08b5413d386f restored the node-zero
+  // state, and nodes 0x259daed25dd75561 and 0x3b55759a160e1082 reduced to one
+  // state. The raw node values are past the 8-bit node field and stop the
+  // program there. The regression maps them into the field (mod 2^8) and
+  // requires distinct streams.
+  constexpr std::uint64_t kFallbackNode = 0xd63e08b5413d386fULL & 0xFF;
+  constexpr std::uint64_t kReductionA = 0x259daed25dd75561ULL & 0xFF;
+  constexpr std::uint64_t kReductionB = 0x3b55759a160e1082ULL & 0xFF;
+  REQUIRE(stream_level_contract::draw64(simdrng::MWC64X32{42}.stream(simdrng::node{kFallbackNode})) !=
+          stream_level_contract::draw64(simdrng::MWC64X32{42}.stream(simdrng::node{0})));
+  REQUIRE(stream_level_contract::draw64(simdrng::MWC64X32{42}.stream(simdrng::node{kReductionA})) !=
+          stream_level_contract::draw64(simdrng::MWC64X32{42}.stream(simdrng::node{kReductionB})));
 }
 
 TEST_CASE("mwc64x32 stream level contract", "[mwc64x32][stream]") {
   stream_level_contract::check_stream_levels<simdrng::MWC64X32>(
       [](auto... levels) { return simdrng::MWC64X32{kSeeds[0]}.stream(levels...); });
-}
-
-TEST_CASE("mwc64x32 output without node matches pinned head output", "[mwc64x32][stream]") {
-  // Regression pin: the draws are pinned to the output of HEAD 911f82b at
-  // seed 0x0102030405060708. Node support must not move any stream without a
-  // node tag.
-  constexpr std::uint64_t kPinSeed = 0x0102030405060708ULL;
-  constexpr std::uint32_t base[] = {0x5458d408U, 0x6eff2c5bU, 0x012f97b8U, 0x3b3cf5aaU,
-                                    0x06cdaf26U, 0x671e757eU, 0xcddca859U, 0x9ba47c1aU};
-  auto g = simdrng::MWC64X32{kPinSeed};
-  for (const auto want : base) {
-    REQUIRE(g() == want);
-  }
-  constexpr std::uint32_t streamed[] = {0xb313f8cfU, 0x3c85c854U, 0xb76d0abbU, 0x60a85f3bU};
-  auto s = simdrng::MWC64X32{kPinSeed}.stream(simdrng::gpu{1}, simdrng::thread{2});
-  for (const auto want : streamed) {
-    REQUIRE(s() == want);
-  }
-}
-
-TEST_CASE("mwc64x32 node mixes mix64(n) into the seed state", "[mwc64x32][stream]") {
-  // White-box pins, cross-checked against an independent reference: node{n}
-  // XORs mix64(n) into the (x, c) seed state before the index jump, and
-  // reduces the state modulo 0xfff145f7ffffffff. A dropped node fold fails
-  // this test by name.
-  constexpr std::uint64_t kPinSeed = 0x0102030405060708ULL;
-  using state_t = simdrng::array<std::uint32_t, 2>;
-  REQUIRE(simdrng::MWC64X32{kPinSeed}.stream(simdrng::node{1}).getState() == state_t{0xdd5a88c8U, 0x910a2dedU});
-  REQUIRE(simdrng::MWC64X32{kPinSeed}.stream(simdrng::node{2}).getState() == state_t{0x48cf82c7U, 0x975835dfU});
-  // node{0} is the identity and node{1} is not thread{1}.
-  REQUIRE(simdrng::MWC64X32{kPinSeed}.stream(simdrng::node{0}).getState() == simdrng::MWC64X32{kPinSeed}.getState());
-  REQUIRE(simdrng::MWC64X32{kPinSeed}.stream(simdrng::node{1}).getState() !=
-          simdrng::MWC64X32{kPinSeed}.stream(simdrng::thread{1}).getState());
-}
-
-TEST_CASE("mwc64x32 node mix keeps a valid state on the degenerate mix", "[mwc64x32][stream]") {
-  // Exactly one n makes the mix land on the degenerate residue 0. Both
-  // preimages of it must fall back to the seed guard state (c = 1), never to a
-  // stuck generator.
-  using state_t = simdrng::array<std::uint32_t, 2>;
-  constexpr state_t kFallback{2298633409U, 1U};
-  simdrng::MWC64X32 g{0};
-  g.setState({0x89025cc1U, 0x910a2decU}); // state ^ mix64(1) == 0
-  REQUIRE(g.stream(simdrng::node{1}).getState() == kFallback);
-  g.setState({0x76fda33eU, 0x6efb681bU}); // state ^ mix64(1) == MOD
-  REQUIRE(g.stream(simdrng::node{1}).getState() == kFallback);
 }

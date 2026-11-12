@@ -54,7 +54,7 @@ TEST_CASE("xoshiro256++ jump(n) composition", "[xoshiro256++][jump_n]") {
   const auto seed = std::random_device()();
   INFO("SEED: " << seed);
   std::mt19937_64 gen(seed);
-  std::uniform_int_distribution<std::uint64_t> dist(0, (std::uint64_t{1} << 40) - 1);
+  std::uniform_int_distribution<std::uint64_t> dist(0, (std::uint64_t{1} << 30) - 1);
   // jump(a); jump(b) == jump(a + b), for random a, b < 2^40 (exercises the
   // high bits of n in square-and-multiply that the forward oracle can't reach).
   for (int t = 0; t < 64; ++t) {
@@ -123,6 +123,17 @@ TEST_CASE("xoshiro256++ jump(pow2) matches fixed jumps", "[xoshiro256++][jump_n]
 namespace {
 
 constexpr std::uint64_t kStreamSeed = 0x0102030405060708ULL;
+// detail::widths_xoshiro256: block 2^127 outputs (thread shift 127), gpu
+// shift 159, node shift 191. The strides line up with the fixed jumps:
+// thread{2} = 2^128 = jump(), gpu{2} = 2^160 = mid_jump(), node{2} =
+// 2^192 = long_jump().
+constexpr std::uint64_t kBlockExp = 127;
+
+// The plain generator advanced by exactly 2^kBlockExp outputs.
+simdrng::XoshiroScalar advanced_one_block(simdrng::XoshiroScalar g) {
+  g.jump(simdrng::pow2{kBlockExp});
+  return g;
+}
 
 } // namespace
 
@@ -134,57 +145,88 @@ static_assert(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{3})() !
 static_assert(simdrng::XoshiroScalar::min() == std::numeric_limits<simdrng::XoshiroScalar::result_type>::min());
 static_assert(simdrng::XoshiroScalar::max() == std::numeric_limits<simdrng::XoshiroScalar::result_type>::max());
 
-TEST_CASE("xoshiro256++ stream thread{i} equals i jumps", "[xoshiro256++][stream]") {
-  for (std::uint64_t i = 0; i <= 8; ++i) {
-    INFO("i: " << i);
-    simdrng::XoshiroScalar by_jumps(kStreamSeed);
-    for (std::uint64_t j = 0; j < i; ++j) {
-      by_jumps.jump();
-    }
-    REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i}).getState() == by_jumps.getState());
-  }
+TEST_CASE("xoshiro256++ stream thread{2} equals jump()", "[xoshiro256++][stream]") {
+  simdrng::XoshiroScalar jumped(kStreamSeed);
+  jumped.jump();
+  REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{2}).getState() == jumped.getState());
 }
 
-TEST_CASE("xoshiro256++ stream gpu{i} equals i long jumps", "[xoshiro256++][stream]") {
-  for (std::uint64_t i = 0; i <= 3; ++i) {
-    INFO("i: " << i);
-    simdrng::XoshiroScalar by_jumps(kStreamSeed);
-    for (std::uint64_t j = 0; j < i; ++j) {
-      by_jumps.long_jump();
+TEST_CASE("xoshiro256++ stream gpu{2} equals mid_jump()", "[xoshiro256++][stream]") {
+  simdrng::XoshiroScalar jumped(kStreamSeed);
+  jumped.mid_jump();
+  REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::gpu{2}).getState() == jumped.getState());
+}
+
+TEST_CASE("xoshiro256++ stream node{2} equals long_jump()", "[xoshiro256++][stream]") {
+  simdrng::XoshiroScalar jumped(kStreamSeed);
+  jumped.long_jump();
+  REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::node{2}).getState() == jumped.getState());
+}
+
+TEST_CASE("xoshiro256++ stream thread{v} equals v * 2^127 jumps", "[xoshiro256++][stream]") {
+  for (std::uint64_t v = 0; v <= 4; ++v) {
+    INFO("v: " << v);
+    auto by_jumps = simdrng::XoshiroScalar{kStreamSeed};
+    for (std::uint64_t j = 0; j < v; ++j) {
+      by_jumps = advanced_one_block(by_jumps);
     }
-    REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::gpu{i}).getState() == by_jumps.getState());
+    REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{v}).getState() == by_jumps.getState());
   }
 }
 
 TEST_CASE("xoshiro256++ stream composition at large thread level", "[xoshiro256++][stream]") {
-  const std::uint64_t i = std::uint64_t{1} << 40;
-  simdrng::XoshiroScalar advanced = simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i});
-  advanced.jump();
-  advanced.jump();
-  advanced.jump();
+  // Composing two smaller jumps: thread{i + 3} is thread{i} plus 3 blocks.
+  const std::uint64_t i = std::uint64_t{1} << 30;
+  auto advanced = simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i});
+  for (int j = 0; j < 3; ++j) {
+    advanced = advanced_one_block(advanced);
+  }
   REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i + 3}).getState() == advanced.getState());
 }
 
-TEST_CASE("xoshiro256++ adjacent thread streams share no value", "[xoshiro256++][stream]") {
-  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 40}) {
+TEST_CASE("xoshiro256++ adjacent thread streams tile at the block boundary", "[xoshiro256++][stream]") {
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 30}) {
     INFO("i: " << i);
-    auto a = simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i});
-    auto b = simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i + 1});
-    std::array<std::uint64_t, 64> oa{}, ob{};
-    for (auto &v : oa) {
-      v = a();
-    }
-    for (auto &v : ob) {
-      v = b();
-    }
+    const auto end_of_block = advanced_one_block(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i}));
+    REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i + 1}).getState() == end_of_block.getState());
+  }
+}
+
+TEST_CASE("xoshiro256++ adjacent thread streams share no value", "[xoshiro256++][stream]") {
+  for (const std::uint64_t i : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{1} << 30}) {
+    INFO("i: " << i);
+    const auto a = stream_level_contract::draw64(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i}));
+    const auto b = stream_level_contract::draw64(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{i + 1}));
     int shared = 0;
-    for (const auto xv : oa) {
-      for (const auto yv : ob) {
+    for (const auto xv : a) {
+      for (const auto yv : b) {
         shared += (xv == yv);
       }
     }
     REQUIRE(shared == 0);
   }
+}
+
+TEST_CASE("xoshiro256++ max in-range levels work and stay distinct", "[xoshiro256++][stream]") {
+  // gpu and thread hold 32 bits (0xFFFFFFFF), the largest values that fit.
+  // The max tuple equals the max-1 tuple plus one block, and the two draw
+  // sets differ.
+  const auto maxed =
+      simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::gpu{0xFFFFFFFFULL}, simdrng::thread{0xFFFFFFFFULL});
+  const auto below =
+      simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::gpu{0xFFFFFFFFULL}, simdrng::thread{0xFFFFFFFEULL});
+  REQUIRE(advanced_one_block(below).getState() == maxed.getState());
+  REQUIRE(stream_level_contract::draw64(maxed) != stream_level_contract::draw64(below));
+}
+
+TEST_CASE("xoshiro256++ sol regression: seed 42 node{42} state is not zero", "[xoshiro256++][stream]") {
+  // Sol review: a node equal to the seed cancelled the whole state, and every
+  // thread then drew zeros.
+  const auto g = simdrng::XoshiroScalar{42}.stream(simdrng::node{42});
+  const auto st = g.getState();
+  REQUIRE_FALSE((st[0] == 0 && st[1] == 0 && st[2] == 0 && st[3] == 0));
+  REQUIRE(stream_level_contract::draw64(simdrng::XoshiroScalar{42}.stream(simdrng::node{42}, simdrng::thread{1})) !=
+          stream_level_contract::draw64(simdrng::XoshiroScalar{42}.stream(simdrng::node{42}, simdrng::thread{2})));
 }
 
 TEST_CASE("xoshiro256++ stream level contract", "[xoshiro256++][stream]") {

@@ -186,39 +186,39 @@ public:
       : XoshiroScalar(XoshiroScalar{seed}.stream(levels...)) {}
 
   /**
-   * @brief Hierarchical stream selection. Returns a new generator on the
-   * stream addressed by the levels: node{n} reseeds the state by folding a
-   * fresh SplitMix stream into it (node{0} is the identity), gpu{g} applies
-   * g long_jumps ((x^(2^192))^g mod P(x), O(log g)), thread{t} applies t jumps
-   * ((x^(2^128))^t, O(log t)). Each gpu stream spans 2^192 values and each
-   * thread stream within it spans 2^128, so streams are disjoint per node.
+   * @brief Hierarchical stream selection. The levels select a position in the
+   * one sequence the seed defines and never touch the state. The tuple maps
+   * to the jump distance node * 2^191 + gpu * 2^159 + thread * 2^127 in the
+   * field layout detail::widths_xoshiro256 (node 64 / gpu 32 / thread 32
+   * bits; 255 bits stay below the 2^256-1 period). The stream starts at that
+   * distance, computed as x^distance mod P(x) in O(log distance). Each stream
+   * owns the 2^127 consecutive values from its start, so streams are
+   * disjoint. The strides align with the fixed jumps: thread{2} is jump()
+   * (2^128), gpu{2} is mid_jump() (2^160), node{2} is long_jump() (2^192). A
+   * gpu or thread value past its field fails hard in every build type.
    * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
   template <typename... Levels>
     requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD constexpr SIMDRNG_ALWAYS_INLINE XoshiroScalar stream(Levels... levels) const noexcept {
+    constexpr auto W = detail::widths_xoshiro256;
     XoshiroScalar g = *this;
+    detail::jump_poly_t poly{1, 0, 0, 0};
     if constexpr (detail::has_level_v<node, Levels...>) {
-      const std::uint64_t n = detail::pick_level<node>(levels...).value;
-      if (n != 0) {
-        SplitMix sm{n};
-        for (auto &w : g.m_state) {
-          w ^= sm();
-        }
-      }
+      const std::uint64_t n = detail::stream_level_checked(W.node_bits, detail::pick_level<node>(levels...).value);
+      poly = detail::polymul_mod(poly, detail::polypow_mod(detail::jump_poly_pow2(W.node_shift()), n));
     }
     if constexpr (detail::has_level_v<gpu, Levels...>) {
-      const std::uint64_t v = detail::pick_level<gpu>(levels...).value;
-      if (v != 0) {
-        g.apply_jump_poly(detail::polypow_mod(detail::poly_2_192(), v));
-      }
+      const std::uint64_t v = detail::stream_level_checked(W.gpu_bits, detail::pick_level<gpu>(levels...).value);
+      poly = detail::polymul_mod(poly, detail::polypow_mod(detail::jump_poly_pow2(W.gpu_shift()), v));
     }
     if constexpr (detail::has_level_v<thread, Levels...>) {
-      const std::uint64_t v = detail::pick_level<thread>(levels...).value;
-      if (v != 0) {
-        g.apply_jump_poly(detail::polypow_mod(detail::poly_2_128(), v));
-      }
+      const std::uint64_t v = detail::stream_level_checked(W.thread_bits, detail::pick_level<thread>(levels...).value);
+      poly = detail::polymul_mod(poly, detail::polypow_mod(detail::jump_poly_pow2(W.thread_shift()), v));
+    }
+    if constexpr (sizeof...(Levels) > 0) {
+      g.apply_jump_poly(poly);
     }
     return g;
   }

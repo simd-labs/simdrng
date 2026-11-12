@@ -97,12 +97,14 @@ public:
       : ChaCha(ChaCha{key, counter, nonce}.stream(levels...)) {}
 
   /**
-   * @brief Hierarchical stream selection. gpu takes the high nonce half and
-   * thread the low nonce half (32 bits each, an out-of-range value fails hard
-   * in every build type), so streams are disjoint by construction for a given
-   * key and every stream keeps the full 64-bit counter range. node{n} XORs a
-   * SplitMix expansion of n into the eight key words (node{0} is the
-   * identity). O(R).
+   * @brief Hierarchical stream selection. The levels select a position in the
+   * one counter block sequence the key and nonce define and never touch the
+   * key or the nonce. The tuple maps to the jump distance node * 2^56 + gpu *
+   * 2^48 + thread * 2^24 in counter blocks, in the field layout
+   * detail::widths_tight (node 8 / gpu 8 / thread 24 bits), added to the
+   * 64-bit counter. Each stream owns the 2^24 counter blocks from its start
+   * (2^27 outputs), so streams are disjoint. A level value past its field
+   * fails hard in every build type (never an alias). O(1).
    * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
@@ -110,35 +112,15 @@ public:
     requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr ChaCha stream(Levels... levels) const noexcept {
     ChaCha g = *this;
-    if constexpr (detail::has_level_v<node, Levels...>) {
-      const std::uint64_t n = detail::pick_level<node>(levels...).value;
-      if (n != 0) {
-        std::uint64_t z = n;
-        for (auto i = 0; i < KEY_WORDCOUNT; ++i) {
-          z = detail::mix64(z);
-          g.m_state[4 + i] ^= static_cast<matrix_word>(z);
-        }
-        // The key changed and the cache position moved into a new stream:
-        // drop any cached block so the next draw comes from the new key.
-        g.m_result_index = static_cast<std::uint8_t>(g.m_result_cache.size());
-      }
+    if constexpr (sizeof...(Levels) > 0) {
+      const std::uint64_t distance = detail::level_distance64(detail::widths_tight, levels...);
+      const std::uint64_t counter = (static_cast<std::uint64_t>(g.m_state[13]) << 32) | g.m_state[12];
+      const std::uint64_t moved = counter + distance;
+      g.m_state[12] = static_cast<matrix_word>(moved);
+      g.m_state[13] = static_cast<matrix_word>(moved >> 32);
+      // The position moved: drop any cached block.
+      g.m_result_index = static_cast<std::uint8_t>(g.m_result_cache.size());
     }
-    std::uint64_t gpu_v = 0;
-    std::uint64_t thread_v = 0;
-    if constexpr (detail::has_level_v<gpu, Levels...>) {
-      gpu_v = detail::pick_level<gpu>(levels...).value;
-    }
-    if constexpr (detail::has_level_v<thread, Levels...>) {
-      thread_v = detail::pick_level<thread>(levels...).value;
-    }
-    assert(gpu_v < (std::uint64_t{1} << 32) && "gpu value overflows its nonce half");
-    assert(thread_v < (std::uint64_t{1} << 32) && "thread value overflows its nonce half");
-    if (gpu_v >= (std::uint64_t{1} << 32) || thread_v >= (std::uint64_t{1} << 32)) [[unlikely]] {
-      detail::stream_level_out_of_range();
-    }
-    g.m_state[14] = static_cast<matrix_word>(thread_v);
-    g.m_state[15] = static_cast<matrix_word>(gpu_v);
-    g.m_result_index = static_cast<std::uint8_t>(g.m_result_cache.size());
     return g;
   }
 

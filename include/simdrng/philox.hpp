@@ -144,54 +144,44 @@ public:
       : Philox(Philox{key, counter}.stream(levels...)) {}
 
   /**
-   * @brief Hierarchical stream selection. The stream index sits in the top 64
-   * counter bits (the top 32 for Philox2x32) with gpu in the high half and
-   * thread in the low half, so the low words keep the per-thread position and
-   * streams are disjoint by construction for a given seed. node{n} XORs a
-   * SplitMix expansion of n into the key words (node{0} is the identity).
-   * For Philox2x32 the 32 index bits are split gpu 8 / thread 24; otherwise
-   * each level takes 32 bits. A level value that does not fit its index bits
-   * fails hard in every build type (never an alias). O(1).
+   * @brief Hierarchical stream selection. The levels select a position in the
+   * one counter sequence the seed key defines and never touch the key. The
+   * tuple maps to the jump distance node * 2^a + gpu * 2^b + thread * 2^c in
+   * counter blocks, added to the counter. The field layout follows the
+   * counter width: detail::widths_tight (node 8 / gpu 8 / thread 24, block
+   * 2^24 counter blocks) for the 64-bit counter, detail::widths_counter128
+   * (node 16 / gpu 16 / thread 32, block 2^64 counter blocks) for the 128-bit
+   * counters, detail::widths_counter256 (node 64 / gpu 64 / thread 64, block
+   * 2^64 counter blocks) for the 256-bit counter. Each stream owns its block
+   * and the low counter words keep the position inside it. A level value
+   * past its field fails hard in every build type (never an alias). O(1).
    * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
   template <typename... Levels>
     requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD constexpr SIMDRNG_ALWAYS_INLINE Philox stream(Levels... levels) const noexcept {
-    constexpr std::uint64_t THREAD_BITS = (W == 32 && N == 2) ? 24 : 32;
-    constexpr std::uint64_t GPU_BITS = (W == 32 && N == 2) ? 8 : 32;
+    constexpr auto Wd = (W == 32 && N == 2) ? detail::widths_tight
+                        : (N * W == 128)    ? detail::widths_counter128
+                                            : detail::widths_counter256;
     Philox g = *this;
+    counter_state distance{};
     if constexpr (detail::has_level_v<node, Levels...>) {
-      const std::uint64_t n = detail::pick_level<node>(levels...).value;
-      if (n != 0) {
-        std::uint64_t z = detail::mix64(n);
-        g.m_key[0] ^= static_cast<word_type>(z);
-        if constexpr (N == 4) {
-          g.m_key[1] ^= static_cast<word_type>(W == 32 ? z >> 32 : detail::mix64(z));
-        }
-      }
+      place(distance, detail::stream_level_checked(Wd.node_bits, detail::pick_level<node>(levels...).value),
+            Wd.node_shift());
     }
-    std::uint64_t gpu_v = 0;
-    std::uint64_t thread_v = 0;
     if constexpr (detail::has_level_v<gpu, Levels...>) {
-      gpu_v = detail::pick_level<gpu>(levels...).value;
+      place(distance, detail::stream_level_checked(Wd.gpu_bits, detail::pick_level<gpu>(levels...).value),
+            Wd.gpu_shift());
     }
     if constexpr (detail::has_level_v<thread, Levels...>) {
-      thread_v = detail::pick_level<thread>(levels...).value;
+      place(distance, detail::stream_level_checked(Wd.thread_bits, detail::pick_level<thread>(levels...).value),
+            Wd.thread_shift());
     }
-    assert(gpu_v < (std::uint64_t{1} << GPU_BITS) && "gpu value overflows its stream-index field");
-    assert(thread_v < (std::uint64_t{1} << THREAD_BITS) && "thread value overflows its stream-index field");
-    if (gpu_v >= (std::uint64_t{1} << GPU_BITS) || thread_v >= (std::uint64_t{1} << THREAD_BITS)) [[unlikely]] {
-      detail::stream_level_out_of_range();
+    if constexpr (sizeof...(Levels) > 0) {
+      add_counter(g.m_counter, distance);
+      g.m_result_index = RESULTS_PER_BLOCK; // the position moved: drop any cached block
     }
-    const std::uint64_t index = (gpu_v << THREAD_BITS) | thread_v;
-    if constexpr (W == 32 && N == 4) {
-      g.m_counter[N - 2] = static_cast<word_type>(index);
-      g.m_counter[N - 1] = static_cast<word_type>(index >> 32);
-    } else {
-      g.m_counter[N - 1] = static_cast<word_type>(index);
-    }
-    g.m_result_index = RESULTS_PER_BLOCK; // the key changed: drop any cached block
     return g;
   }
 
@@ -419,6 +409,39 @@ private:
     for (std::uint8_t i = 0; i < N; ++i) {
       if (ctr[i]-- != 0)
         break;
+    }
+  }
+
+  // Places value at bit offset shift in the little-endian counter words. The
+  // width table keeps each field inside two adjacent words, so one spill word
+  // covers every case.
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE void place(counter_state &words, std::uint64_t value,
+                                                               std::uint64_t shift) noexcept {
+    const auto wi = static_cast<std::uint8_t>(shift / W);
+    const auto bs = static_cast<unsigned>(shift % W);
+    words[wi] |= static_cast<word_type>(value << bs);
+    if (bs != 0 && wi + 1 < N) {
+      words[wi + 1] |= static_cast<word_type>(value >> (W - bs));
+    }
+  }
+
+  // Adds delta to counter modulo the counter width, carries across words.
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE void add_counter(counter_state &counter,
+                                                                     const counter_state &delta) noexcept {
+    std::uint64_t carry = 0;
+    for (std::uint8_t i = 0; i < N; ++i) {
+      const std::uint64_t a = counter[i];
+      const std::uint64_t b = delta[i];
+      if constexpr (W < 64) {
+        const std::uint64_t sum = a + b + carry;
+        counter[i] = static_cast<word_type>(sum);
+        carry = sum >> W;
+      } else {
+        const std::uint64_t partial = a + b;
+        const std::uint64_t sum = partial + carry;
+        counter[i] = static_cast<word_type>(sum);
+        carry = (partial < a) + (sum < partial);
+      }
     }
   }
 

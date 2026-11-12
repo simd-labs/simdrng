@@ -6,25 +6,22 @@
 // exposes a const member template stream(levels...) returning a new generator
 // and a level constructor Gen{seed}.stream(levels...) == Gen(seed, levels...).
 // Levels accept any subset in any order; each type at most once; a missing
-// level is 0. Placement per generator:
-//   XoshiroScalar: node folds a SplitMix stream into the state (hash reseed),
-//                  gpu = long_jump, thread = jump.
-//   Philox4x:      node XORs into the key words, gpu/thread take the high/low
-//                  32 bits of the 64-bit stream index in the top counter words.
-//   Philox2x32:    node XORs into the key word, gpu gets 8 and thread 24 bits
-//                  of the 32-bit index word.
-//   ChaCha:        node XORs into the key words, gpu/thread take the two nonce
-//                  halves (32 bits each).
-//   SplitMix64:    node XORs a SplitMix expansion of n into the seed state
-//                  (same fold Philox and ChaCha apply to their key words),
-//                  gpu 8 / thread 24 bits of the 32-bit index word.
-//   MWC64X32:      node XORs a SplitMix expansion of n into the (x, c) seed
-//                  state before the index jump (folded into the
-//                  modulus; the seed guard covers the degenerate mix);
-//                  index bits: gpu 7 / thread 24.
-// A gpu or thread value that does not fit its index field is a hard failure in
-// every build type (detail::stream_level_out_of_range), never an alias.
+// level is 0.
+//
+// A level tuple selects a position in the one sequence the seed defines.
+// Levels never touch the seed or the key. Each generator maps the tuple to
+// one jump distance: distance = node * 2^a + gpu * 2^b + thread * 2^c with
+// disjoint bit fields (a > b > c), so the mapping is injective. Each stream
+// owns a block of 2^c outputs (counter blocks for the counter-based
+// generators) and no two tuples of one seed overlap. The width table in
+// detail::stream_widths is the one source of truth for the field widths.
+// A level value past its field stops the program in every build type
+// (detail::stream_level_out_of_range): a compile error in constant
+// evaluation, std::abort on host, __trap() on device. No aliasing in any
+// build. The base position of the plain generator must stay below the block
+// length for the blocks to stay disjoint.
 
+#include <cassert>
 #include <cstdint>
 #include <cstdlib>
 #include <type_traits>
@@ -80,25 +77,79 @@ template <typename T, typename... Levels> SIMDRNG_HD constexpr T pick_level(Leve
   return result;
 }
 
-/// SplitMix64 avalanche over one Weyl step. Used to fold a level value into a
-/// key or state word without a reversible bias.
-SIMDRNG_HD constexpr std::uint64_t mix64(std::uint64_t z) noexcept {
-  z += 0x9e3779b97f4a7c15;
-  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
-  z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
-  return z ^ (z >> 31);
-}
+/// Per-generator stream-level field widths in bits: the one source of truth.
+/// The fields sit at disjoint shifts: thread at block_bits (shift c), gpu at
+/// block_bits + thread_bits (shift b), node at block_bits + thread_bits +
+/// gpu_bits (shift a). Every stream owns 2^block_bits outputs (counter blocks
+/// for the counter-based generators). One row per period or counter budget:
+///
+///   widths_tight        node 8 / gpu 8 / thread 24, block 2^24.
+///     SplitMix64 (period 2^64): 2^24 outputs per stream.
+///     MWC64X32 (period about 2^63): 2^24 outputs per stream.
+///     Philox2x32 (64-bit counter): 2^24 counter blocks per stream.
+///     ChaCha (64-bit counter): 2^24 counter blocks = 2^27 outputs per stream.
+///   widths_xoshiro256   node 64 / gpu 32 / thread 32, block 2^127.
+///     XoshiroScalar (period 2^256 - 1): 2^127 outputs per stream. The
+///     fields stop at 255 bits so no block wraps the period.
+///   widths_counter128   node 16 / gpu 16 / thread 32, block 2^64.
+///     Philox4x32, Philox2x64 (128-bit counters): 2^64 counter blocks per
+///     stream, the full 64-bit counter range as position.
+///   widths_counter256   node 64 / gpu 64 / thread 64, block 2^64.
+///     Philox4x64 (256-bit counter): 2^64 counter blocks per stream.
+struct stream_widths {
+  std::uint64_t node_bits;
+  std::uint64_t gpu_bits;
+  std::uint64_t thread_bits;
+  std::uint64_t block_bits;
+  SIMDRNG_HD constexpr std::uint64_t thread_shift() const noexcept { return block_bits; }
+  SIMDRNG_HD constexpr std::uint64_t gpu_shift() const noexcept { return block_bits + thread_bits; }
+  SIMDRNG_HD constexpr std::uint64_t node_shift() const noexcept { return block_bits + thread_bits + gpu_bits; }
+};
 
-/// Hard failure for a gpu or thread value that overflows its stream-index
-/// field, in every build type. A constant evaluation that reaches the call is
-/// a compile error (non-constexpr call); the host aborts; a CUDA device
-/// traps. The stream() functions are noexcept, so no exception path exists.
+inline constexpr stream_widths widths_tight{8, 8, 24, 24};
+inline constexpr stream_widths widths_xoshiro256{64, 32, 32, 127};
+inline constexpr stream_widths widths_counter128{16, 16, 32, 64};
+inline constexpr stream_widths widths_counter256{64, 64, 64, 64};
+
+/// Hard failure for a level value past its field, in every build type. A
+/// constant evaluation that reaches the call is a compile error (a
+/// non-constexpr call); the host aborts; a CUDA device traps. The stream()
+/// functions are noexcept, so no exception path exists.
 SIMDRNG_NEVER_INLINE SIMDRNG_HD inline void stream_level_out_of_range() noexcept {
 #if defined(__CUDA_ARCH__)
   __trap();
 #else
   std::abort();
 #endif
+}
+
+/// Returns v, or stops the program when v does not fit the field width bits.
+/// A 64-bit field holds every std::uint64_t and needs no check.
+SIMDRNG_HD constexpr std::uint64_t stream_level_checked(std::uint64_t bits, std::uint64_t v) noexcept {
+  assert((bits >= 64 || v < (std::uint64_t{1} << bits)) && "stream level value overflows its field");
+  if (bits < 64 && v >= (std::uint64_t{1} << bits)) [[unlikely]] {
+    stream_level_out_of_range();
+  }
+  return v;
+}
+
+/// The jump distance for a level tuple in a 64-bit jump space:
+/// node * 2^a + gpu * 2^b + thread * 2^c in the field layout of w. One unit is
+/// one output (one counter block for the counter-based generators). The
+/// fields are disjoint, so the OR is the sum. O(1).
+template <typename... Levels>
+SIMDRNG_HD constexpr std::uint64_t level_distance64(stream_widths w, Levels... levels) noexcept {
+  std::uint64_t distance = 0;
+  if constexpr (has_level_v<node, Levels...>) {
+    distance |= stream_level_checked(w.node_bits, pick_level<node>(levels...).value) << w.node_shift();
+  }
+  if constexpr (has_level_v<gpu, Levels...>) {
+    distance |= stream_level_checked(w.gpu_bits, pick_level<gpu>(levels...).value) << w.gpu_shift();
+  }
+  if constexpr (has_level_v<thread, Levels...>) {
+    distance |= stream_level_checked(w.thread_bits, pick_level<thread>(levels...).value) << w.thread_shift();
+  }
+  return distance;
 }
 
 } // namespace detail

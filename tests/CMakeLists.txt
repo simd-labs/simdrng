@@ -8,16 +8,16 @@ cpmaddpackage(
         SYSTEM
 )
 
-# Google Benchmark. Linux builds enable libpfm for hardware counters
-# (IPC / cache-miss / branch-miss) to match the columns we previously
-# surfaced via nanobench.
+#Google Benchmark.Linux builds enable libpfm for hardware counters
+#(IPC / cache - miss / branch - miss) to match the columns we previously
+#surfaced via nanobench.
 set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Detect libpfm4 (header + .so). When both are present, enable hardware
-    # counters in Google Benchmark; otherwise fall back silently so local
-    # builds without libpfm4-dev still work.
+    #Detect libpfm4(header +.so).When both are present, enable hardware
+    #counters in Google Benchmark; otherwise fall back silently so local
+    #builds without libpfm4 - dev still work.
     find_path(PFM_INCLUDE_DIR perfmon/pfmlib.h)
     find_library(PFM_LIBRARY pfm)
     if(PFM_INCLUDE_DIR AND PFM_LIBRARY)
@@ -47,17 +47,17 @@ list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/contrib)
 
 enable_language(C)
 
-# ---------------------------------------------------------------------------
-# Reference generators from https://prng.di.unimi.it/ (public domain / CC0).
-# Used by the SplitMix/Xoshiro tests and benchmarks as a ground-truth oracle.
+#-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -
+#Reference generators from https: // prng.di.unimi.it/ (public domain / CC0).
+#Used by the SplitMix / Xoshiro tests and benchmarks as a ground - truth oracle.
 #
-# Cache them in the CPM source cache when one is configured (so CI restores
-# them alongside xsimd/poet/Catch2/...), else in a stable build-tree dir. The
-# download is STATUS-checked with a short retry and is a HARD ERROR on failure:
-# a silent empty include previously surfaced as `s`/`next` undeclared in the
-# benchmark build. ChaCha uses Monocypher
-# (fetched via CPM below), not a downloaded reference.
-# ---------------------------------------------------------------------------
+#Cache them in the CPM source cache when one is configured(so CI restores
+#them alongside xsimd / poet / Catch2 / ...), else in a stable build - tree dir.The
+#download is STATUS - checked with a short retry and is a HARD ERROR on failure:
+#a silent empty include previously surfaced as `s`/`next` undeclared in the
+#benchmark build.ChaCha uses Monocypher
+#(fetched via CPM below), not a downloaded reference.
+#-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -
 if(DEFINED ENV{CPM_SOURCE_CACHE})
     set(TEST_INCLUDE_DIR "$ENV{CPM_SOURCE_CACHE}/simdrng-reference")
 else()
@@ -91,12 +91,12 @@ endfunction()
 
 simdrng_fetch_reference(https://prng.di.unimi.it/splitmix64.c ${TEST_INCLUDE_DIR}/splitmix64.c)
 simdrng_fetch_reference(https://prng.di.unimi.it/xoshiro256plusplus.c ${TEST_INCLUDE_DIR}/xoshiro256plusplus.c)
-# xoshiro256plusplus.c #includes "f2x.c" (Vigna's F2[x] polynomial-jump reference).
+#xoshiro256plusplus.c #includes "f2x.c"(Vigna's F2[x] polynomial-jump reference).
 simdrng_fetch_reference(https://prng.di.unimi.it/f2x.c ${TEST_INCLUDE_DIR}/f2x.c)
-# Vigna's MWC64X/32 reference (multiply-with-carry, 32-bit output; testMWC64X32 oracle).
+#Vigna's MWC64X/32 reference (multiply-with-carry, 32-bit output; testMWC64X32 oracle).
 simdrng_fetch_reference(https://prng.di.unimi.it/MWC64X_32.c ${TEST_INCLUDE_DIR}/MWC64X_32.c)
 
-# Use Monocypher for ChaCha20 (fetched via CPM)
+#Use Monocypher for ChaCha20(fetched via CPM)
 cpmaddpackage(
     NAME monocypher
     GITHUB_REPOSITORY LoupVaillant/Monocypher
@@ -114,7 +114,7 @@ endif()
 include(CTest)
 enable_testing()
 
-# Scalar tests build with or without xsimd.
+#Scalar tests build with or without xsimd.
 add_executable(testSplitMix splitmix_tests.cpp)
 target_link_libraries(testSplitMix PRIVATE simdrng Catch2::Catch2WithMain)
 target_include_directories(testSplitMix SYSTEM PRIVATE ${TEST_INCLUDE_DIR})
@@ -135,8 +135,8 @@ target_link_libraries(testMWC64X32 PRIVATE simdrng Catch2::Catch2WithMain)
 target_include_directories(testMWC64X32 SYSTEM PRIVATE ${TEST_INCLUDE_DIR})
 add_test(NAME testMWC64X32 COMMAND testMWC64X32)
 
-# Same source, forced onto the no-__int128 u128 shim so the MSVC fallback
-# path is compiled and exercised on every host.
+#Same source, forced onto the no - __int128 u128 shim so the MSVC fallback
+#path is compiled and exercised on every host.
 add_executable(testMWC64X32Shim test_mwc64x32.cpp)
 target_compile_definitions(testMWC64X32Shim PRIVATE SIMDRNG_TEST_U128_SHIM)
 target_link_libraries(testMWC64X32Shim PRIVATE simdrng Catch2::Catch2WithMain)
@@ -151,8 +151,8 @@ target_include_directories(
 )
 add_test(NAME testMWC64X32Mulmod COMMAND testMWC64X32Mulmod)
 
-# Same source, forced onto the no-__int128 u128 shim so the MSVC fallback
-# path is compiled and exercised on every host.
+#Same source, forced onto the no - __int128 u128 shim so the MSVC fallback
+#path is compiled and exercised on every host.
 add_executable(testMWC64X32MulmodShim test_mwc64x32_mulmod.cpp)
 target_compile_definitions(
     testMWC64X32MulmodShim
@@ -180,7 +180,7 @@ add_executable(testPhilox test_philox.cpp)
 target_link_libraries(testPhilox PRIVATE simdrng Catch2::Catch2WithMain)
 add_test(NAME testPhilox COMMAND testPhilox)
 
-# Thread-safety smoke test (also the ThreadSanitizer target).
+#Thread - safety smoke test(also the ThreadSanitizer target).
 find_package(Threads REQUIRED)
 add_executable(testThreadSafety test_thread_safety.cpp)
 target_link_libraries(
@@ -189,47 +189,45 @@ target_link_libraries(
 )
 add_test(NAME testThreadSafety COMMAND testThreadSafety)
 
-# Out-of-range stream levels: one subprocess per packed field. The probe
-# re-executes itself per case and requires the child to die hard (abort) in
-# every build type instead of aliasing another stream; a surviving child fails
-# the test with its "survived" line on stdout.
+#Out - of - range stream levels : one subprocess per level field.The probe
+#re - executes itself per case and requires the child to die hard(abort) in
+#every build type instead of aliasing another stream; a surviving child fails
+#the test with its "survived" line on stdout.The value is the first past the
+#field, from the width table in stream_levels.hpp.A 64 - bit field holds every
+#std::uint64_t and gets no case.
 add_executable(testStreamLevelsOOB stream_levels_oob_probe.cpp)
 target_link_libraries(testStreamLevelsOOB PRIVATE simdrng)
 simdrng_enable_warnings(testStreamLevelsOOB)
-add_test(
-    NAME testStreamLevelsOOB-philox2x32-gpu
-    COMMAND testStreamLevelsOOB philox2x32-gpu
+set(SIMDRNG_OOB_CASES
+    splitmix-node
+    splitmix-gpu
+    splitmix-thread
+    mwc64x32-node
+    mwc64x32-gpu
+    mwc64x32-thread
+    philox2x32-node
+    philox2x32-gpu
+    philox2x32-thread
+    philox4x32-node
+    philox4x32-gpu
+    philox4x32-thread
+    philox2x64-node
+    philox2x64-gpu
+    philox2x64-thread
+    chacha-node
+    chacha-gpu
+    chacha-thread
+    xoshiro-gpu
+    xoshiro-thread
 )
-add_test(
-    NAME testStreamLevelsOOB-philox2x32-thread
-    COMMAND testStreamLevelsOOB philox2x32-thread
-)
-add_test(
-    NAME testStreamLevelsOOB-mwc64x32-gpu
-    COMMAND testStreamLevelsOOB mwc64x32-gpu
-)
-add_test(
-    NAME testStreamLevelsOOB-mwc64x32-thread
-    COMMAND testStreamLevelsOOB mwc64x32-thread
-)
-add_test(
-    NAME testStreamLevelsOOB-splitmix-gpu
-    COMMAND testStreamLevelsOOB splitmix-gpu
-)
-add_test(
-    NAME testStreamLevelsOOB-splitmix-thread
-    COMMAND testStreamLevelsOOB splitmix-thread
-)
-add_test(
-    NAME testStreamLevelsOOB-chacha-gpu
-    COMMAND testStreamLevelsOOB chacha-gpu
-)
-add_test(
-    NAME testStreamLevelsOOB-chacha-thread
-    COMMAND testStreamLevelsOOB chacha-thread
-)
+foreach(_case IN LISTS SIMDRNG_OOB_CASES)
+    add_test(
+        NAME testStreamLevelsOOB-${_case}
+        COMMAND testStreamLevelsOOB ${_case}
+    )
+endforeach()
 
-# CUDA device test: scalar generator output on device equals host output.
+#CUDA device test : scalar generator output on device equals host output.
 if(SIMDRNG_CUDA)
     add_executable(test_cuda test_cuda.cu)
     target_link_libraries(test_cuda PRIVATE simdrng Catch2::Catch2WithMain)
@@ -246,18 +244,18 @@ set(SIMDRNG_SCALAR_TEST_TARGETS
     testPhilox
     testThreadSafety
 )
-# Link tests with -fno-lto under GCC. The library ships fat LTO objects (machine
-# code + bytecode; see the top-level CMakeLists), so the tests consume the machine
-# code directly and keep lto-wrapper out of the test link — sidestepping a GCC
-# aarch64 LTO ICE (in lto_tag_to_tree_code) hit while streaming the dispatch
-# template instantiations that only testBulkAPI pulls in. The library and the
-# benchmarks deliberately keep full LTO.
+#Link tests with - fno - lto under GCC.The library ships fat LTO objects(machine
+#code + bytecode; see the top - level CMakeLists), so the tests consume the machine
+#code directly and keep lto - wrapper out of the test link — sidestepping a GCC
+#aarch64 LTO ICE(in lto_tag_to_tree_code) hit while streaming the dispatch
+#template instantiations that only testBulkAPI pulls in.The library and the
+#benchmarks deliberately keep full LTO.
 foreach(_t IN LISTS SIMDRNG_SCALAR_TEST_TARGETS)
     simdrng_enable_warnings(${_t})
     target_link_options(${_t} PRIVATE $<$<CXX_COMPILER_ID:GNU>:-fno-lto>)
 endforeach()
 
-# SIMD tests and benchmarks.
+#SIMD tests and benchmarks.
 add_executable(testXoshiroSIMD test_xoshiro_simd.cpp)
 target_link_libraries(testXoshiroSIMD PRIVATE simdrng Catch2::Catch2WithMain)
 target_include_directories(testXoshiroSIMD SYSTEM PRIVATE ${TEST_INCLUDE_DIR})
@@ -284,8 +282,8 @@ add_executable(testBulkAPI test_bulk_api.cpp)
 target_link_libraries(testBulkAPI PRIVATE simdrng xsimd Catch2::Catch2WithMain)
 add_test(NAME testBulkAPI COMMAND testBulkAPI)
 
-# C ABI test — drives include/simdrng/capi.h through the self-contained static
-# lib (the surface every non-Python binding links). Only when the C API is built.
+#C ABI test — drives include / simdrng / capi.h through the self - contained static
+#lib(the surface every non - Python binding links).Only when the C API is built.
 if(TARGET simdrng_c_static)
     add_executable(testCApi test_capi.cpp)
     target_link_libraries(
@@ -316,12 +314,12 @@ foreach(
     simdrng_enable_warnings(${_t})
 endforeach()
 
-# Tests link with -fno-lto (see the scalar-test note above); benchmarks keep LTO.
+#Tests link with - fno - lto(see the scalar - test note above); benchmarks keep LTO.
 foreach(_t IN ITEMS testXoshiroSIMD testChaChaSIMD testPhiloxSIMD testBulkAPI)
     target_link_options(${_t} PRIVATE $<$<CXX_COMPILER_ID:GNU>:-fno-lto>)
 endforeach()
 
-# Convenience target to run the benchmarks with hardware counters enabled.
+#Convenience target to run the benchmarks with hardware counters enabled.
 add_custom_target(
     run_benchmarks
     COMMAND
