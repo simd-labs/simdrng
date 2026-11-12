@@ -8,7 +8,7 @@
 #define SIMDRNG_VERSION_PATCH 2
 
 // Full version string, including a `-dev.N+g<sha>` suffix on untagged builds.
-#define SIMDRNG_VERSION_STRING "0.0.2-dev.158+g29b4ea0"
+#define SIMDRNG_VERSION_STRING "0.0.2-dev.160+g16d018c"
 
 // Numeric encoding (MAJOR * 10000 + MINOR * 100 + PATCH) for comparisons.
 #define SIMDRNG_VERSION \

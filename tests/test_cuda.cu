@@ -168,12 +168,14 @@ void check_equal(kernel_fn kernel, seq_fn seq, std::uint64_t seed) {
 // Hierarchical streams: 4096 threads, each builds Gen{seed}.stream(levels...)
 // from its gid (node = gid & 3, gpu = gid >> 8, thread = gid & 0xFF) and draws
 // 8 values. The host runs the same sseq functions, so bit equality covers the
-// host/device parity of the level paths. SplitMix and MWC64X32 reject node.
+// host/device parity of the level paths. Only MWC64X32 rejects node.
 constexpr int kStreamThreads = 4096;
 constexpr int kStreamDraws = 8;
 
+// SplitMix takes node too: gpu/node/thread in a non-default order on purpose.
 SIMDRNG_HD void sseq_splitmix(std::uint64_t seed, std::uint64_t gid, std::uint64_t *out) {
-  auto g = simdrng::SplitMix{seed}.stream(simdrng::gpu{gid >> 8}, simdrng::thread{gid & 0xFF});
+  auto g = simdrng::SplitMix{seed}.stream(simdrng::gpu{gid >> 10}, simdrng::node{gid & 3},
+                                          simdrng::thread{gid & 0x3FF});
   for (int k = 0; k < kStreamDraws; ++k) {
     out[k] = g();
   }

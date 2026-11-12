@@ -51,25 +51,31 @@ public:
    * SplitMix{state}.stream(levels...).
    */
   template <typename... Levels>
-    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...> &&
-             !detail::has_level_v<node, Levels...>)
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr explicit SplitMix(const std::uint64_t state, Levels... levels) noexcept
       : SplitMix(SplitMix{state}.stream(levels...)) {}
 
   /**
-   * @brief Hierarchical stream selection. gpu takes 8 and thread 24 bits of
-   * the stream index (gpu in the high half, debug assert on overflow); the
+   * @brief Hierarchical stream selection. node{n} XORs a SplitMix expansion of
+   * n into the seed state (node{0} is the identity), the same fold Philox and
+   * ChaCha apply to their key words. gpu takes 8 and thread 24 bits of the
+   * stream index (gpu in the high half, debug assert on overflow); the
    * generator at index i owns the 2^32 consecutive values starting at output
    * i * 2^32 + 1 of the seed stream (state + i * 2^32 * gamma), so streams are
-   * distinct for index < 2^32. node is rejected: SplitMix has no jump
-   * structure, so the node id must be hashed into the seed instead. O(1).
-   * @param levels Any subset of {gpu, thread}, in any order, each at most once.
+   * distinct for index < 2^32. O(1).
+   * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
   template <typename... Levels>
-    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...> &&
-             !detail::has_level_v<node, Levels...>)
+    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr SplitMix stream(Levels... levels) const noexcept {
+    SplitMix g = *this;
+    if constexpr (detail::has_level_v<node, Levels...>) {
+      const std::uint64_t n = detail::pick_level<node>(levels...).value;
+      if (n != 0) {
+        g.m_state ^= detail::mix64(n);
+      }
+    }
     std::uint64_t gpu_v = 0;
     std::uint64_t thread_v = 0;
     if constexpr (detail::has_level_v<gpu, Levels...>) {
@@ -81,7 +87,7 @@ public:
     assert(gpu_v < (std::uint64_t{1} << 8) && "gpu value overflows its stream-index field");
     assert(thread_v < (std::uint64_t{1} << 24) && "thread value overflows its stream-index field");
     const std::uint64_t index = (gpu_v << 24) | thread_v;
-    return SplitMix{m_state + (index << 32) * GAMMA};
+    return SplitMix{g.m_state + (index << 32) * GAMMA};
   }
 
   /**

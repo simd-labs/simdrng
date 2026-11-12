@@ -189,6 +189,30 @@ target_link_libraries(
 )
 add_test(NAME testThreadSafety COMMAND testThreadSafety)
 
+# Out-of-range stream levels: one subprocess per packed field. The probe
+# re-executes itself per case and requires the child to die hard (abort) in
+# every build type instead of aliasing another stream; a surviving child fails
+# the test with its "survived" line on stdout.
+add_executable(testStreamLevelsOOB stream_levels_oob_probe.cpp)
+target_link_libraries(testStreamLevelsOOB PRIVATE simdrng)
+simdrng_enable_warnings(testStreamLevelsOOB)
+add_test(
+    NAME testStreamLevelsOOB-philox2x32-gpu
+    COMMAND testStreamLevelsOOB philox2x32-gpu
+)
+add_test(
+    NAME testStreamLevelsOOB-philox2x32-thread
+    COMMAND testStreamLevelsOOB philox2x32-thread
+)
+add_test(
+    NAME testStreamLevelsOOB-mwc64x32-gpu
+    COMMAND testStreamLevelsOOB mwc64x32-gpu
+)
+add_test(
+    NAME testStreamLevelsOOB-mwc64x32-thread
+    COMMAND testStreamLevelsOOB mwc64x32-thread
+)
+
 # CUDA device test: scalar generator output on device equals host output.
 if(SIMDRNG_CUDA)
     add_executable(test_cuda test_cuda.cu)

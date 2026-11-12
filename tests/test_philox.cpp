@@ -266,6 +266,20 @@ TEMPLATE_TEST_CASE("Philox level (0, 0) and (0, 1) share no value in their first
   REQUIRE(shared == 0);
 }
 
+TEST_CASE("philox2x32 max in-range levels match pinned head output", "[philox][stream]") {
+  // gpu 8 bits (255) and thread 24 bits (0xFFFFFF) are the largest values
+  // that fit the 32-bit stream index. The draws are pinned to the output of
+  // HEAD 16d018c at seed 0x0102030405060708; the range checks must not move
+  // any in-range output.
+  constexpr std::uint64_t expected[] = {0x6b6228c7b516bda7ULL, 0xb21e4770535ff495ULL, 0xcaf698831d690585ULL,
+                                        0x7fd3d9d3a9506ffdULL, 0xc44ab13eb079461cULL, 0x9dac4dd7c2eaff63ULL,
+                                        0xecde951f7f1d4478ULL, 0x0a92e7cc74580801ULL};
+  auto g = simdrng::Philox2x32{kStreamSeed}.stream(simdrng::gpu{255}, simdrng::thread{0xFFFFFFULL});
+  for (const auto want : expected) {
+    REQUIRE(g() == want);
+  }
+}
+
 TEST_CASE("Philox2x32 stream 0 second draw differs from stream 1 first draw", "[philox][stream]") {
   using G = simdrng::Philox2x32;
   const G base{kStreamSeed};

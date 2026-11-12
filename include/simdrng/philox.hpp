@@ -150,7 +150,8 @@ public:
    * streams are disjoint by construction for a given seed. node{n} XORs a
    * SplitMix expansion of n into the key words (node{0} is the identity).
    * For Philox2x32 the 32 index bits are split gpu 8 / thread 24; otherwise
-   * each level takes 32 bits. O(1).
+   * each level takes 32 bits. A level value that does not fit its index bits
+   * fails hard in every build type (never an alias). O(1).
    * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
@@ -158,6 +159,7 @@ public:
     requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD constexpr SIMDRNG_ALWAYS_INLINE Philox stream(Levels... levels) const noexcept {
     constexpr std::uint64_t THREAD_BITS = (W == 32 && N == 2) ? 24 : 32;
+    constexpr std::uint64_t GPU_BITS = (W == 32 && N == 2) ? 8 : 32;
     Philox g = *this;
     if constexpr (detail::has_level_v<node, Levels...>) {
       const std::uint64_t n = detail::pick_level<node>(levels...).value;
@@ -177,8 +179,11 @@ public:
     if constexpr (detail::has_level_v<thread, Levels...>) {
       thread_v = detail::pick_level<thread>(levels...).value;
     }
-    assert(gpu_v << THREAD_BITS >> THREAD_BITS == gpu_v && "gpu value overflows its stream-index field");
+    assert(gpu_v < (std::uint64_t{1} << GPU_BITS) && "gpu value overflows its stream-index field");
     assert(thread_v < (std::uint64_t{1} << THREAD_BITS) && "thread value overflows its stream-index field");
+    if (gpu_v >= (std::uint64_t{1} << GPU_BITS) || thread_v >= (std::uint64_t{1} << THREAD_BITS)) [[unlikely]] {
+      detail::stream_level_out_of_range();
+    }
     const std::uint64_t index = (gpu_v << THREAD_BITS) | thread_v;
     if constexpr (W == 32 && N == 4) {
       g.m_counter[N - 2] = static_cast<word_type>(index);

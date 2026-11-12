@@ -15,10 +15,16 @@
 //                  of the 32-bit index word.
 //   ChaCha:        node XORs into the key words, gpu/thread take the two nonce
 //                  halves (32 bits each).
-//   SplitMix64,    node is a compile error (no jump structure); index bits:
-//   MWC64X32:      gpu 8 (MWC 7) / thread 24, debug assert on overflow.
+//   SplitMix64:    node XORs a SplitMix expansion of n into the seed state
+//                  (same fold Philox and ChaCha apply to their key words),
+//                  gpu 8 / thread 24 bits of the 32-bit index word.
+//   MWC64X32:      node is a compile error (no jump structure); index bits:
+//                  gpu 7 / thread 24.
+// A gpu or thread value that does not fit its index field is a hard failure in
+// every build type (detail::stream_level_out_of_range), never an alias.
 
 #include <cstdint>
+#include <cstdlib>
 #include <type_traits>
 
 #include "macros.hpp"
@@ -79,6 +85,18 @@ SIMDRNG_HD constexpr std::uint64_t mix64(std::uint64_t z) noexcept {
   z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
   z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
   return z ^ (z >> 31);
+}
+
+/// Hard failure for a gpu or thread value that overflows its stream-index
+/// field, in every build type. A constant evaluation that reaches the call is
+/// a compile error (non-constexpr call); the host aborts; a CUDA device
+/// traps. The stream() functions are noexcept, so no exception path exists.
+SIMDRNG_NEVER_INLINE SIMDRNG_HD inline void stream_level_out_of_range() noexcept {
+#if defined(__CUDA_ARCH__)
+  __trap();
+#else
+  std::abort();
+#endif
 }
 
 } // namespace detail

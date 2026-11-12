@@ -129,12 +129,19 @@ TEST_CASE("mwc64x32 stream thread{i} equals i jumps", "[mwc64x32][stream]") {
   }
 }
 
-TEST_CASE("mwc64x32 stream gpu{i} equals i long-index jumps", "[mwc64x32][stream]") {
-  // gpu sits in the high 7 index bits: gpu{v} = thread{v << 24}.
+TEST_CASE("mwc64x32 stream gpu{v} equals v jumps of 2^56 outputs", "[mwc64x32][stream]") {
+  // gpu sits in the high 7 index bits: index v << 24, and one index unit
+  // spans 2^32 outputs, so gpu{v} skips v * 2^56 outputs. A thread value of
+  // v << 24 would exceed the 24-bit thread field, so the identity is stated
+  // as a jump instead.
   for (const std::uint64_t seed : kSeeds) {
     INFO("seed: " << seed);
-    REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::gpu{2}).getState() ==
-            simdrng::MWC64X32{seed}.stream(simdrng::thread{std::uint64_t{2} << 24}).getState());
+    for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{2}, std::uint64_t{127}}) {
+      INFO("v: " << v);
+      simdrng::MWC64X32 jumped(seed);
+      jumped.jump(v << 56);
+      REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::gpu{v}).getState() == jumped.getState());
+    }
   }
 }
 
@@ -166,6 +173,20 @@ TEST_CASE("mwc64x32 adjacent thread streams share no value", "[mwc64x32][stream]
       }
     }
     REQUIRE(shared == 0);
+  }
+}
+
+TEST_CASE("mwc64x32 max in-range levels match pinned head output", "[mwc64x32][stream]") {
+  // gpu 7 bits (127) and thread 24 bits (0xFFFFFF) are the largest values
+  // that fit the 31-bit stream index. The draws are pinned to the output of
+  // HEAD 16d018c at seed 0x0102030405060708; the range checks must not move
+  // any in-range output.
+  constexpr std::uint64_t kPinSeed = 0x0102030405060708ULL;
+  constexpr std::uint32_t expected[] = {0x4b55e49cU, 0x52cc8e4dU, 0x589d0323U, 0x5f21797fU,
+                                        0xa97797abU, 0x4e1f27a6U, 0x72397c26U, 0x94aeec91U};
+  auto g = simdrng::MWC64X32{kPinSeed}.stream(simdrng::gpu{127}, simdrng::thread{0xFFFFFFULL});
+  for (const auto want : expected) {
+    REQUIRE(g() == want);
   }
 }
 

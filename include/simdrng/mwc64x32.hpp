@@ -72,12 +72,12 @@ public:
 
   /**
    * @brief Hierarchical stream selection. gpu takes 7 and thread 24 bits of
-   * the stream index (gpu in the high half, debug assert on overflow), so the
-   * index stays below 2^31 and each of the 2^31 streams spans 2^32 values
-   * within the ~2^63 period. The generator at index i starts at the base
-   * state jumped by i * 2^32 outputs, computed in O(log i) as
-   * (A1^(2^32))^i mod MOD. node is rejected: hash the node id into the seed
-   * instead. O(1).
+   * the stream index (gpu in the high half; an out-of-range value fails hard
+   * in every build type), so the index stays below 2^31 and each of the 2^31
+   * streams spans 2^32 values within the ~2^63 period. The generator at index
+   * i starts at the base state jumped by i * 2^32 outputs, computed in O(log
+   * i) as (A1^(2^32))^i mod MOD. node is rejected: hash the node id into the
+   * seed instead. O(1).
    * @param levels Any subset of {gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
@@ -95,6 +95,9 @@ public:
     }
     assert(gpu_v < (std::uint64_t{1} << 7) && "gpu value overflows its stream-index field");
     assert(thread_v < (std::uint64_t{1} << 24) && "thread value overflows its stream-index field");
+    if (gpu_v >= (std::uint64_t{1} << 7) || thread_v >= (std::uint64_t{1} << 24)) [[unlikely]] {
+      detail::stream_level_out_of_range();
+    }
     const std::uint64_t index = (gpu_v << 24) | thread_v;
     MWC64X32 g = *this;
     if (index != 0) {
