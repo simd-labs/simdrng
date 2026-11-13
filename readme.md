@@ -171,6 +171,10 @@ A level value above the max stops the program.
 In a constant expression it is a compile error. On the host the program calls
 `std::abort()`. In CUDA device code it calls `__trap()`.
 
+On `XoshiroScalar`, a nonzero level in `stream()` or the level constructor
+exceeds the constexpr step limit of clang and MSVC (1048576). Such calls work
+at runtime only.
+
 For the counter-based generators one counter block is one Philox block (2 or
 4 words) or one 64-byte ChaCha block. The low counter words keep the
 position in the stream block. Keep the position of the plain generator

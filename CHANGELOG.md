@@ -97,6 +97,12 @@ Pre-1.0, the public API may change between minor versions.
 
 ### Fixed
 
+- Compile failure on clang, AppleClang and MSVC: a `static_assert` in
+  `tests/test_xoshiro.cpp` evaluated `XoshiroScalar::stream()` in a constant
+  expression and hit the compiler constexpr step limit (1048576). The check
+  runs at runtime now, with the same expected values. A nonzero stream level
+  on `XoshiroScalar` is runtime-only for this reason; the readme names the
+  limit.
 - `Philox` wrong output on CUDA devices: `single_round` indexed the static
   `constexpr` round-constant arrays with a runtime loop variable, which device
   code must not do because it takes the host object's address; the constants

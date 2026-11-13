@@ -137,13 +137,18 @@ simdrng::XoshiroScalar advanced_one_block(simdrng::XoshiroScalar g) {
 
 } // namespace
 
-// stream() must be usable in constant expressions.
+// stream() must be usable in constant expressions. The tagged case runs at
+// runtime instead: its jump_poly_pow2 loop exceeds the constexpr step limit
+// of clang and MSVC (1048576) at compile time.
 static_assert(simdrng::XoshiroScalar{kStreamSeed}.stream().getState() ==
               simdrng::XoshiroScalar(kStreamSeed).getState());
-static_assert(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{3})() !=
-              simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{4})());
 static_assert(simdrng::XoshiroScalar::min() == std::numeric_limits<simdrng::XoshiroScalar::result_type>::min());
 static_assert(simdrng::XoshiroScalar::max() == std::numeric_limits<simdrng::XoshiroScalar::result_type>::max());
+
+TEST_CASE("xoshiro256++ constexpr stream check at runtime", "[xoshiro256++][stream]") {
+  REQUIRE(simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{3})() !=
+          simdrng::XoshiroScalar{kStreamSeed}.stream(simdrng::thread{4})());
+}
 
 TEST_CASE("xoshiro256++ stream thread{2} equals jump()", "[xoshiro256++][stream]") {
   simdrng::XoshiroScalar jumped(kStreamSeed);
