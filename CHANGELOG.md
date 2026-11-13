@@ -49,6 +49,15 @@ Pre-1.0, the public API may change between minor versions.
   does not carry into the nonce. A level value above its max stops the program.
   The compiler rejects it in a constant expression. The host calls `std::abort()`.
   CUDA device code calls `__trap()`.
+  `XoshiroSIMD` and `XoshiroNative` accept the same three tags. A tag tuple
+  selects the same 2^127 block as `XoshiroScalar`. A tagged SIMD generator
+  splits that block between its lanes. Lane 0 starts at the block start and
+  equals `XoshiroScalar` with the same seed and tags. Lane i starts at
+  `i * S` into the block, with `S = 2^(127 - ceil(log2(W)))` for W lanes, and
+  owns S outputs. For W <= 8, the minimum S is 2^124. The plain seed
+  constructor keeps the older lane layout with lane i at `i * 2^128`. Those
+  lanes overlap scalar `thread` streams of the same seed, so a program that
+  mixes the two layouts applies tags to each generator.
 - CUDA device support for the five scalar generators (`SplitMix`, `XoshiroScalar`,
   `ChaCha`, `Philox`, `MWC64X32`): `macros.hpp` defines `SIMDRNG_HD`
   (`__host__ __device__` under nvcc/hipcc, empty otherwise) and every scalar

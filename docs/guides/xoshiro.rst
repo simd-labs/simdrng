@@ -79,6 +79,18 @@ strides align with the fixed jumps: ``thread{2}`` equals ``jump()``,
 omitted level is ``0``. A level value above its max stops the program. See
 :ref:`gen-properties` for the jump spacing and the full period table.
 
+``XoshiroSIMD`` and ``XoshiroNative`` accept the same tags. A tag tuple
+selects the same block of 2\ :sup:`127` outputs as ``XoshiroScalar``. The
+lanes split that block. Lane 0 starts at the block start and equals
+``XoshiroScalar`` with the same seed and tags. Lane i starts at ``i * S``
+into the block, with ``S = 2^(127 - ceil(log2(W)))`` for W lanes. Each lane
+owns S outputs. W is 2, 4 or 8 on the supported targets, so S is
+2\ :sup:`126`, 2\ :sup:`125` or 2\ :sup:`124`. A plain-seeded
+``XoshiroSIMD`` or ``XoshiroNative`` does not follow the tag layout. It
+keeps lane i at ``i * 2^128``, and those lanes overlap scalar ``thread``
+streams of the same seed. A program that mixes the two layouts applies tags
+to each generator.
+
 To address an arbitrary stream offset, ``jump(n)`` advances the state by exactly
 ``n`` calls to the generator. It builds the jump polynomial ``x^n mod P(x)`` on
 the fly (square-and-multiply in GF(2)[x]), so any ``n`` in ``[0, 2^64)`` works.

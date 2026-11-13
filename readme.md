@@ -125,6 +125,28 @@ widths and the stream length for each generator. The width table in
 | Philox 4x32, 2x64 | 2^16 - 1   | 2^16 - 1  | 2^32 - 1     | 2^64 counter blocks                |
 | Philox 4x64       | no limit   | no limit  | no limit     | 2^64 counter blocks                |
 
+### SIMD lane layout
+
+The Xoshiro256++ row covers `XoshiroScalar`, `XoshiroSIMD` and
+`XoshiroNative`. All three accept the same tags. A tag tuple selects one
+block of 2^127 outputs. A tagged `XoshiroSIMD` or `XoshiroNative` splits
+that block between its lanes. Lane 0 starts at the block start and equals
+`XoshiroScalar` with the same seed and tags. Lane i starts at `i * S` into
+the block, with `S = 2^(127 - ceil(log2(W)))` for W lanes. Each lane owns S
+outputs. The formula in `detail::simd_lane_stride_exp`
+(`include/simdrng/xoshiro_simd.hpp`) is the one source of truth for S.
+
+| W lanes      | S for each lane |
+|--------------|-----------------|
+| 2            | 2^126           |
+| 4            | 2^125           |
+| 8            | 2^124           |
+
+The plain seed constructor `Gen{seed}` does not follow the tag layout. It
+keeps the older layout with lane i at `i * 2^128`. Those lanes overlap
+scalar `thread` streams of the same seed, so a program that mixes the two
+layouts applies tags to each generator.
+
 A stream that draws more than its length runs into the next stream's numbers,
 and nothing checks for this. The rule holds for each generator with its own
 length:
