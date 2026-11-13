@@ -23,6 +23,8 @@ Vigna.
 #pragma once
 
 #include <array>
+#include <bit>
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -37,6 +39,50 @@ Vigna.
 namespace simdrng {
 
 class XoshiroSIMD;
+
+namespace detail {
+
+/// Tagged lane layout of the SIMD generators. The tag tuple selects one block
+/// of 2^127 outputs, as for XoshiroScalar. The lanes split that block: lane i
+/// starts at i * S into the block, with S = 2^(127 - ceil(log2(W))) for W
+/// lanes. Each lane owns S outputs. This function is the one source of truth
+/// for S. W <= 8 gives S >= 2^124. W > 128 would give S < 2^120 and is out of
+/// the supported range.
+SIMDRNG_ALWAYS_INLINE constexpr std::uint64_t simd_lane_stride_exp(const std::uint8_t W) noexcept {
+  assert(W <= 128 && "tagged lane stride S must stay >= 2^120");
+  std::uint64_t lg = 0;
+  while ((std::uint64_t{1} << lg) < W) {
+    ++lg;
+  }
+  return 127 - lg;
+}
+
+/// Writes the tagged lane layout into a flat state. Word r * W + i is
+/// register r of lane i. The tag levels select the block as for XoshiroScalar.
+/// Lane 0 moves to the block start: the input lane 0 advanced by the tag
+/// distance. Lane i takes the same state advanced by i * S, with S from
+/// simd_lane_stride_exp. The levels never touch the seed. Every call writes
+/// the tagged layout, also with no levels.
+template <typename... Levels>
+SIMDRNG_ALWAYS_INLINE void simd_lanes_tagged(std::uint64_t *flat, const std::uint8_t W, Levels... levels) noexcept {
+  XoshiroScalar base{0};
+  base.setState({flat[0], flat[W], flat[2 * W], flat[3 * W]});
+  const std::uint64_t k = simd_lane_stride_exp(W);
+  for (std::uint8_t i = 0; i < W; ++i) {
+    XoshiroScalar lane = base.stream(levels...);
+    for (std::uint64_t b = 0; (std::uint64_t{1} << b) <= i; ++b) {
+      if (((i >> b) & 1U) != 0U) {
+        lane.jump(pow2{k + b});
+      }
+    }
+    const auto state = lane.getState();
+    for (std::uint8_t r = 0; r < 4; ++r) {
+      flat[r * W + i] = state[r];
+    }
+  }
+}
+
+} // namespace detail
 
 namespace internal {
 
@@ -281,6 +327,43 @@ public:
 
   SIMDRNG_ALWAYS_INLINE explicit XoshiroNative(const result_type seed) noexcept { m_state.seed(seed); }
 
+  /**
+   * @brief Level constructor: XoshiroNative(seed, levels...) equals
+   * XoshiroNative(seed).stream(levels...).
+   * @param seed The seed value.
+   * @param levels Stream levels, any subset of {node, gpu, thread}, each at most once.
+   */
+  template <typename... Levels>
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_ALWAYS_INLINE explicit XoshiroNative(const result_type seed, Levels... levels) noexcept
+      : XoshiroNative(seed) {
+    *this = stream(levels...);
+  }
+
+  /**
+   * @brief Hierarchical stream selection with the tagged lane layout. The
+   * levels select one block of 2^127 outputs in the one sequence the seed
+   * defines, as for XoshiroScalar. Lane 0 starts at the block start and equals
+   * the scalar generator with the same levels. Lane i starts at i * S into the
+   * block, with S = 2^(127 - ceil(log2(W))) for W lanes, and owns S outputs.
+   * The call rebuilds every lane from lane 0. A plain-seeded generator keeps
+   * the plain lane layout and not this spacing. A gpu or thread value past its
+   * field fails hard in every build type.
+   * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
+   * @return The generator for the addressed block.
+   */
+  template <typename... Levels>
+    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_ALWAYS_INLINE XoshiroNative stream(Levels... levels) const noexcept {
+    XoshiroNative g = *this;
+    std::array<result_type, 4 * State::SIMD_WIDTH> flat{};
+    g.get_flat_state(flat.data());
+    detail::simd_lanes_tagged(flat.data(), State::SIMD_WIDTH, levels...);
+    g.set_flat_state(flat.data());
+    g.set_cache_index(0);
+    return g;
+  }
+
   SIMDRNG_ALWAYS_INLINE result_type operator()() noexcept {
     if (m_index == 0) [[unlikely]] {
       m_state.populate_cache(m_cache);
@@ -366,6 +449,44 @@ public:
   }
 
   SIMDRNG_LOCAL explicit XoshiroSIMD(result_type seed) noexcept;
+
+  /**
+   * @brief Level constructor: XoshiroSIMD(seed, levels...) equals
+   * XoshiroSIMD(seed).stream(levels...).
+   * @param seed The seed value.
+   * @param levels Stream levels, any subset of {node, gpu, thread}, each at most once.
+   */
+  template <typename... Levels>
+    requires(sizeof...(Levels) > 0 && detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_ALWAYS_INLINE explicit XoshiroSIMD(result_type seed, Levels... levels) noexcept : XoshiroSIMD(seed) {
+    *this = stream(levels...);
+  }
+
+  /**
+   * @brief Hierarchical stream selection with the tagged lane layout. The
+   * levels select one block of 2^127 outputs in the one sequence the seed
+   * defines, as for XoshiroScalar. Lane 0 starts at the block start and equals
+   * the scalar generator with the same levels. Lane i starts at i * S into the
+   * block, with S = 2^(127 - ceil(log2(W))) for W lanes, and owns S outputs.
+   * The call rebuilds every lane from lane 0. A plain-seeded generator keeps
+   * the plain lane layout and not this spacing. A gpu or thread value past its
+   * field fails hard in every build type.
+   * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
+   * @return The generator for the addressed block.
+   */
+  template <typename... Levels>
+    requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
+  SIMDRNG_ALWAYS_INLINE XoshiroSIMD stream(Levels... levels) const noexcept {
+    XoshiroSIMD g = *this;
+    const auto W = m_simd_width();
+    assert(W <= 8 && "flat state buffer holds at most 8 lanes");
+    std::array<result_type, 32> flat{};
+    g.get_flat_state(flat.data());
+    detail::simd_lanes_tagged(flat.data(), W, levels...);
+    g.set_flat_state(flat.data());
+    g.set_cache_index(0);
+    return g;
+  }
 
   SIMDRNG_ALWAYS_INLINE result_type operator()() noexcept {
     if (m_index == 0) [[unlikely]] {

@@ -195,6 +195,24 @@ class SplitMixBitGenerator(BitGeneratorBase):
         return bg
 
 
+def _levels_call(cls_ext, seed, node, gpu, thread):
+    """Call the extension constructor with the None rule.
+
+    With all level keywords None, call the plain constructor. With any
+    level keyword, call the tag API and put the missing levels at 0. The
+    nanobind layer rejects None for ``nb::object``, so the None rule runs
+    here and the extension class sees only integers.
+    """
+    if node is None and gpu is None and thread is None:
+        return cls_ext(seed)
+    return cls_ext(
+        seed,
+        node=0 if node is None else node,
+        gpu=0 if gpu is None else gpu,
+        thread=0 if thread is None else thread,
+    )
+
+
 @_register
 class XoshiroBitGenerator(BitGeneratorBase):
     _bit_generator_name = "Xoshiro"
@@ -203,18 +221,20 @@ class XoshiroBitGenerator(BitGeneratorBase):
         self,
         seed: int,
         *,
-        node: int = 0,
-        gpu: int = 0,
-        thread: int = 0,
+        node: int | None = None,
+        gpu: int | None = None,
+        thread: int | None = None,
     ) -> None:
         """Wrap the scalar Xoshiro256++ core.
 
         The keyword-only levels ``node``, ``gpu``, and ``thread`` select a
         hierarchical stream. Any subset in any order is accepted; omitted
-        levels equal zero. Field widths are node 64 / gpu 32 / thread 32 bits.
-        Out-of-range levels raise ``ValueError`` before the C++ core is touched.
+        levels equal zero. With no level keyword the constructor keeps the
+        plain seed. Any level keyword selects the tagged stream. Field widths
+        are node 64 / gpu 32 / thread 32 bits. Out-of-range levels raise
+        ``ValueError`` before the C++ core gets the call.
         """
-        super().__init__(_Xoshiro(seed, node=node, gpu=gpu, thread=thread))
+        super().__init__(_levels_call(_Xoshiro, seed, node, gpu, thread))
 
     @classmethod
     def _from_state(cls, state: dict) -> XoshiroBitGenerator:
@@ -240,19 +260,20 @@ class XoshiroSIMDBitGenerator(BitGeneratorBase):
         self,
         seed: int,
         *,
-        node: int = 0,
-        gpu: int = 0,
-        thread: int = 0,
+        node: int | None = None,
+        gpu: int | None = None,
+        thread: int | None = None,
     ) -> None:
         """Wrap the runtime-dispatched Xoshiro256++ SIMD core.
 
-        The keyword-only levels select a hierarchical stream. SIMD lanes
-        already consume the smallest jump spacing, so ``thread`` advances
-        whole SIMD blocks by mid-jumps and ``gpu`` by long-jumps. The C++
-        core exposes no node level, so a nonzero ``node`` raises
-        ``ValueError``. Field widths are gpu 32 / thread 32 bits.
+        The keyword-only levels select a hierarchical stream with the same
+        block layout as the scalar core. With no level keyword the
+        constructor keeps the plain seed lane layout. Any level keyword
+        selects the tagged layout, where the lanes split the 2^127 block of
+        the level tuple. Field widths are node 64 / gpu 32 / thread 32 bits.
+        Out-of-range levels raise ``ValueError``.
         """
-        super().__init__(_XoshiroSIMD(seed, node=node, gpu=gpu, thread=thread))
+        super().__init__(_levels_call(_XoshiroSIMD, seed, node, gpu, thread))
 
     @classmethod
     def _from_state(cls, state: dict) -> XoshiroSIMDBitGenerator:
@@ -280,18 +301,19 @@ if _XoshiroNative is not None:
             self,
             seed: int,
             *,
-            node: int = 0,
-            gpu: int = 0,
-            thread: int = 0,
+            node: int | None = None,
+            gpu: int | None = None,
+            thread: int | None = None,
         ) -> None:
             """Wrap the compile-time best-arch Xoshiro256++ core.
 
-            Same stream semantics as ``XoshiroSIMDBitGenerator``:
-            ``thread`` is a mid-jump, ``gpu`` is a long-jump, and a nonzero
-            ``node`` raises ``ValueError`` because the C++ core has no node
-            level. Field widths are gpu 32 / thread 32 bits.
+            Same tag API and lane layout as ``XoshiroSIMDBitGenerator``:
+            the levels select one block of 2^127 outputs, the tagged lanes
+            split that block, and no level keyword keeps the plain seed lane
+            layout. Field widths are node 64 / gpu 32 / thread 32 bits.
+            Out-of-range levels raise ``ValueError``.
             """
-            super().__init__(_XoshiroNative(seed, node=node, gpu=gpu, thread=thread))
+            super().__init__(_levels_call(_XoshiroNative, seed, node, gpu, thread))
 
         @classmethod
         def _from_state(cls, state: dict) -> XoshiroNativeBitGenerator:
@@ -479,7 +501,11 @@ def SplitMix(seed: int) -> np.random.Generator:
 
 
 def Xoshiro(
-    seed: int, *, node: int = 0, gpu: int = 0, thread: int = 0
+    seed: int,
+    *,
+    node: int | None = None,
+    gpu: int | None = None,
+    thread: int | None = None,
 ) -> np.random.Generator:
     """Return ``np.random.Generator`` backed by scalar Xoshiro256++.
 
@@ -491,14 +517,15 @@ def Xoshiro(
 def XoshiroSIMD(
     seed: int,
     *,
-    node: int = 0,
-    gpu: int = 0,
-    thread: int = 0,
+    node: int | None = None,
+    gpu: int | None = None,
+    thread: int | None = None,
 ) -> np.random.Generator:
     """Return ``np.random.Generator`` backed by XoshiroSIMD (runtime SIMD dispatch).
 
-    Keyword-only stream levels in any order; omitted levels equal 0.
-    ``node`` must be 0 on this backend.
+    Keyword-only stream levels in any order. Omitted levels equal 0. The
+    tagged lanes split the 2^127 block of the level tuple. See the readme for
+    the lane layout and the plain-seed caveat.
     """
     return Generator(XoshiroSIMDBitGenerator(seed, node=node, gpu=gpu, thread=thread))
 
@@ -506,14 +533,14 @@ def XoshiroSIMD(
 def XoshiroNative(
     seed: int,
     *,
-    node: int = 0,
-    gpu: int = 0,
-    thread: int = 0,
+    node: int | None = None,
+    gpu: int | None = None,
+    thread: int | None = None,
 ) -> np.random.Generator:
     """Return ``np.random.Generator`` backed by XoshiroNative (compile-time best arch).
 
-    Keyword-only stream levels in any order; omitted levels equal 0.
-    ``node`` must be 0 on this backend.
+    Keyword-only stream levels in any order. Omitted levels equal 0. Same
+    lane layout as ``XoshiroSIMD``.
     """
     if _XoshiroNative is None:
         raise RuntimeError("XoshiroNative not available on this platform")

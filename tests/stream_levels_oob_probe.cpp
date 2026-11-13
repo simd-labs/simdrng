@@ -18,6 +18,7 @@
 #include <simdrng/philox.hpp>
 #include <simdrng/splitmix.hpp>
 #include <simdrng/xoshiro_scalar.hpp>
+#include <simdrng/xoshiro_simd.hpp>
 
 namespace {
 
@@ -84,6 +85,14 @@ std::uint64_t run_case(const char *name, std::uint64_t v) {
   if (gen == "xoshiro") {
     return draw_leveled(simdrng::XoshiroScalar{kSeed}, level, v);
   }
+  if (gen == "xoshirosimd") {
+    return draw_leveled(simdrng::XoshiroSIMD{kSeed}, level, v);
+  }
+#ifndef XSIMD_NO_SUPPORTED_ARCHITECTURE
+  if (gen == "xoshironative") {
+    return draw_leveled(simdrng::XoshiroNative{kSeed}, level, v);
+  }
+#endif
   if (gen == "chacha") {
     return draw_leveled(simdrng::ChaCha<>{kChaChaKey, 0, 0}, level, v);
   }

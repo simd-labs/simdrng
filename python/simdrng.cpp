@@ -44,6 +44,24 @@ std::uint64_t checked_level(const char *level, std::uint64_t bits, nb::object va
   return (std::uint64_t)v;
 }
 
+// Constructs the wrapper with the None rule: all three level keywords None
+// uses the plain constructor and the plain lane layout. Any level keyword
+// calls the C++ tag API with the missing levels at 0. The level values are
+// checked against the C++ width table first.
+template <typename Rng, typename Py>
+void init_leveled(Py *self, std::uint64_t seed, nb::object node, nb::object gpu, nb::object thread) {
+  if (node.is_none() && gpu.is_none() && thread.is_none()) {
+    new (self) Py(seed);
+    return;
+  }
+  const auto W = simdrng::detail::widths_xoshiro256;
+  const nb::object zero = nb::int_(0);
+  const std::uint64_t n = checked_level("node", W.node_bits, node.is_none() ? zero : node);
+  const std::uint64_t g = checked_level("gpu", W.gpu_bits, gpu.is_none() ? zero : gpu);
+  const std::uint64_t t = checked_level("thread", W.thread_bits, thread.is_none() ? zero : thread);
+  new (self) Py(seed, simdrng::node{n}, simdrng::gpu{g}, simdrng::thread{t});
+}
+
 // ---------------------------------------------------------------------------
 // Type traits for dispatch in bulk fill and state serialization
 template <typename T> struct is_xoshiro_cached : std::false_type {};
@@ -428,47 +446,31 @@ NB_MODULE(simdrng_ext, m) {
   using PyXoshiro = PyBitGenerator<simdrng::XoshiroScalar>;
   auto xo = nb::class_<PyXoshiro>(m, "_Xoshiro")
                 .def(nb::init<uint64_t>(), "seed"_a)
-                // Hierarchical stream levels, any subset in any order, omitted = 0.
+                // Hierarchical stream levels, any subset in any order. All the
+                // level keywords None keeps the plain constructor; any level
+                // keyword given calls the tag API with the missing levels at 0.
                 .def(
                     "__init__",
-                    [](PyXoshiro *self, std::uint64_t seed, nb::object node = nb::int_(0), nb::object gpu = nb::int_(0),
-                       nb::object thread = nb::int_(0)) {
-                      const auto W = simdrng::detail::widths_xoshiro256;
-                      const std::uint64_t n = checked_level("node", W.node_bits, node);
-                      const std::uint64_t g = checked_level("gpu", W.gpu_bits, gpu);
-                      const std::uint64_t t = checked_level("thread", W.thread_bits, thread);
-                      new (self) PyXoshiro(seed);
-                      self->rng = self->rng.stream(simdrng::node{n}, simdrng::gpu{g}, simdrng::thread{t});
+                    [](PyXoshiro *self, std::uint64_t seed, nb::object node = nb::none(), nb::object gpu = nb::none(),
+                       nb::object thread = nb::none()) {
+                      init_leveled<simdrng::XoshiroScalar>(self, seed, node, gpu, thread);
                     },
                     "seed"_a, "node"_a, "gpu"_a, "thread"_a);
   register_base<simdrng::XoshiroScalar>(xo);
   register_jump<simdrng::XoshiroScalar>(xo);
 
   using PyXoshiroSIMD = PyBitGenerator<simdrng::XoshiroSIMD>;
-  auto xs = nb::class_<PyXoshiroSIMD>(m, "_XoshiroSIMD")
-                .def(nb::init<uint64_t>(), "seed"_a)
-                // SIMD lanes already consume the jump spacing, so a thread takes a
-                // mid_jump and a gpu a long_jump, as before the level API. The C++
-                // class exposes no node level, so a nonzero node raises ValueError.
-                .def(
-                    "__init__",
-                    [](PyXoshiroSIMD *self, std::uint64_t seed, nb::object node = nb::int_(0),
-                       nb::object gpu = nb::int_(0), nb::object thread = nb::int_(0)) {
-                      const auto W = simdrng::detail::widths_xoshiro256;
-                      const std::uint64_t n = checked_level("node", W.node_bits, node);
-                      const std::uint64_t g = checked_level("gpu", W.gpu_bits, gpu);
-                      const std::uint64_t t = checked_level("thread", W.thread_bits, thread);
-                      if (n != 0)
-                        throw nb::value_error("node level is not supported by XoshiroSIMD");
-                      new (self) PyXoshiroSIMD(seed);
-                      for (std::uint64_t i = 0; i < t; ++i) {
-                        self->rng.mid_jump();
-                      }
-                      for (std::uint64_t i = 0; i < g; ++i) {
-                        self->rng.long_jump();
-                      }
-                    },
-                    "seed"_a, "node"_a, "gpu"_a, "thread"_a);
+  auto xs =
+      nb::class_<PyXoshiroSIMD>(m, "_XoshiroSIMD")
+          .def(nb::init<uint64_t>(), "seed"_a)
+          // Same tag API as the scalar class. The tagged lanes split the
+          // 2^127 block of the level tuple; see the readme for the lane
+          // layout and the plain-seed caveat.
+          .def(
+              "__init__",
+              [](PyXoshiroSIMD *self, std::uint64_t seed, nb::object node = nb::none(), nb::object gpu = nb::none(),
+                 nb::object thread = nb::none()) { init_leveled<simdrng::XoshiroSIMD>(self, seed, node, gpu, thread); },
+              "seed"_a, "node"_a, "gpu"_a, "thread"_a);
   register_base<simdrng::XoshiroSIMD>(xs);
   register_jump<simdrng::XoshiroSIMD>(xs);
 
@@ -476,25 +478,12 @@ NB_MODULE(simdrng_ext, m) {
   using PyXoshiroNative = PyBitGenerator<simdrng::XoshiroNative>;
   auto xn = nb::class_<PyXoshiroNative>(m, "_XoshiroNative")
                 .def(nb::init<uint64_t>(), "seed"_a)
-                // Same stream semantics as XoshiroSIMD: thread is a mid_jump, gpu is
-                // a long_jump, and the C++ class exposes no node level.
+                // Same tag API and lane layout as _XoshiroSIMD.
                 .def(
                     "__init__",
-                    [](PyXoshiroNative *self, std::uint64_t seed, nb::object node = nb::int_(0),
-                       nb::object gpu = nb::int_(0), nb::object thread = nb::int_(0)) {
-                      const auto W = simdrng::detail::widths_xoshiro256;
-                      const std::uint64_t n = checked_level("node", W.node_bits, node);
-                      const std::uint64_t g = checked_level("gpu", W.gpu_bits, gpu);
-                      const std::uint64_t t = checked_level("thread", W.thread_bits, thread);
-                      if (n != 0)
-                        throw nb::value_error("node level is not supported by XoshiroNative");
-                      new (self) PyXoshiroNative(seed);
-                      for (std::uint64_t i = 0; i < t; ++i) {
-                        self->rng.mid_jump();
-                      }
-                      for (std::uint64_t i = 0; i < g; ++i) {
-                        self->rng.long_jump();
-                      }
+                    [](PyXoshiroNative *self, std::uint64_t seed, nb::object node = nb::none(),
+                       nb::object gpu = nb::none(), nb::object thread = nb::none()) {
+                      init_leveled<simdrng::XoshiroNative>(self, seed, node, gpu, thread);
                     },
                     "seed"_a, "node"_a, "gpu"_a, "thread"_a);
   register_base<simdrng::XoshiroNative>(xn);

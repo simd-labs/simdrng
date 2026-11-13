@@ -219,6 +219,10 @@ set(SIMDRNG_OOB_CASES
     chacha-thread
     xoshiro-gpu
     xoshiro-thread
+    xoshirosimd-gpu
+    xoshirosimd-thread
+    xoshironative-gpu
+    xoshironative-thread
 )
 foreach(_case IN LISTS SIMDRNG_OOB_CASES)
     add_test(

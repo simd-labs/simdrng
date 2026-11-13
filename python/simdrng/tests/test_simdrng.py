@@ -259,12 +259,16 @@ class TestJumpN:
 
 # ── Stream levels (node / gpu / thread) ────────────────────────────────────
 
-# (name, kind, factory) where kind is "scalar" (full 3-level C++ stream API)
-# or "simd" (thread/gpu only via mid/long jump loops).
+# (name, factory) where factory takes keyword-only levels on seed 42.
 STREAM_LEVEL_FACTORIES = [
-    ("Xoshiro", "scalar", lambda **kw: simdrng.Xoshiro(42, **kw)),
-    ("XoshiroSIMD", "simd", lambda **kw: simdrng.XoshiroSIMD(42, **kw)),
-    ("XoshiroNative", "simd", lambda **kw: simdrng.XoshiroNative(42, **kw)),
+    ("Xoshiro", lambda **kw: simdrng.Xoshiro(42, **kw)),
+    ("XoshiroSIMD", lambda **kw: simdrng.XoshiroSIMD(42, **kw)),
+    ("XoshiroNative", lambda **kw: simdrng.XoshiroNative(42, **kw)),
+]
+
+SIMD_LEVEL_FACTORIES = [
+    ("XoshiroSIMD", lambda **kw: simdrng.XoshiroSIMD(42, **kw)),
+    ("XoshiroNative", lambda **kw: simdrng.XoshiroNative(42, **kw)),
 ]
 
 
@@ -275,20 +279,19 @@ def level_factory(request):
     return request.param
 
 
+@pytest.fixture(params=SIMD_LEVEL_FACTORIES, ids=[f[0] for f in SIMD_LEVEL_FACTORIES])
+def simd_level_factory(request):
+    return request.param
+
+
 class TestStreamLevels:
     def test_keyword_order_gives_identical_output(self, level_factory):
-        _name, kind, factory = level_factory
+        _name, factory = level_factory
         orders = [
             {"node": 1, "gpu": 2, "thread": 3},
             {"thread": 3, "gpu": 2, "node": 1},
             {"gpu": 2, "node": 1, "thread": 3},
         ]
-        if kind == "simd":
-            orders = [
-                {"node": 0, "gpu": 2, "thread": 3},
-                {"thread": 3, "gpu": 2, "node": 0},
-                {"gpu": 2, "node": 0, "thread": 3},
-            ]
         first = None
         for kw in orders:
             out = factory(**kw).random(50)
@@ -298,75 +301,120 @@ class TestStreamLevels:
                 np.testing.assert_array_equal(first, out)
 
     def test_omitted_levels_equal_zero(self, level_factory):
-        _name, _kind, factory = level_factory
+        _name, factory = level_factory
         np.testing.assert_array_equal(
-            factory().random(50), factory(node=0, gpu=0, thread=0).random(50)
+            factory(gpu=2).random(50), factory(node=0, gpu=2, thread=0).random(50)
+        )
+        np.testing.assert_array_equal(
+            factory(thread=3).random(50), factory(node=0, gpu=0, thread=3).random(50)
+        )
+        np.testing.assert_array_equal(
+            factory(node=1).random(50), factory(node=1, gpu=0, thread=0).random(50)
+        )
+
+    def test_scalar_plain_equals_zero_tags(self):
+        # scalar no-tags already equals all-zero tags
+        np.testing.assert_array_equal(
+            simdrng.Xoshiro(42).random(50),
+            simdrng.Xoshiro(42, node=0, gpu=0, thread=0).random(50),
         )
 
     def test_distinct_values_give_distinct_output(self, level_factory):
-        _name, kind, factory = level_factory
+        _name, factory = level_factory
         base = factory().random(50)
         with_thread = factory(thread=1).random(50)
         with_gpu = factory(gpu=1).random(50)
-        assert not np.array_equal(base, with_thread)
-        assert not np.array_equal(base, with_gpu)
+        with_node = factory(node=1).random(50)
+        for other in (with_thread, with_gpu, with_node):
+            assert not np.array_equal(base, other)
         assert not np.array_equal(with_gpu, with_thread)
-        if kind == "scalar":
-            # node{1} vs thread{1}: distinctness of the two outer levels
-            with_node = factory(node=1).random(50)
-            assert not np.array_equal(base, with_node)
-            assert not np.array_equal(with_node, with_thread)
+        assert not np.array_equal(with_node, with_thread)
+        assert not np.array_equal(with_node, with_gpu)
 
     def test_levels_match_cpp_jump_oracle(self, level_factory):
-        _name, kind, factory = level_factory
-        if kind == "scalar":
-            # stream(node{1})/stream(gpu{1})/stream(thread{1}) must equal the
-            # fixed jump polynomials 2^191 / 2^159 / 2^127 on the same seed.
-            cases = [({"node": 1}, 191), ({"gpu": 1}, 159), ({"thread": 1}, 127)]
-            for kw, exponent in cases:
-                by_level = factory(**kw).random(50)
-                jumped = factory()
-                jumped.bit_generator.jump(simdrng.pow2(exponent))
-                np.testing.assert_array_equal(by_level, jumped.random(50))
-        else:
-            # SIMD lanes already consume the 2^128 spacing, so thread{1} is a
-            # 2^160 advance and gpu{1} is a 2^192 advance.
-            cases = [({"thread": 1}, 160), ({"gpu": 1}, 192)]
-            for kw, exponent in cases:
-                by_level = factory(**kw).random(50)
-                jumped = factory()
-                jumped.bit_generator.jump(simdrng.pow2(exponent))
-                np.testing.assert_array_equal(by_level, jumped.random(50))
+        _name, factory = level_factory
+        # stream(node{1})/stream(gpu{1})/stream(thread{1}) must equal the
+        # fixed jump polynomials 2^191 / 2^159 / 2^127 on the same seed. On
+        # the SIMD backends the oracle is the lane 0 stream.
+        cases = [({"node": 1}, 191), ({"gpu": 1}, 159), ({"thread": 1}, 127)]
+        for kw, exponent in cases:
+            w = factory(**kw).bit_generator.state["state"].get("simd_width", 1)
+            raw = factory(**kw).bit_generator.random_raw(50 * w)
+            jumped = simdrng.Xoshiro(42).bit_generator
+            jumped.jump(simdrng.pow2(exponent))
+            np.testing.assert_array_equal(raw[::w][:50], jumped.random_raw(50))
+
+    def test_lane_zero_equals_scalar(self, simd_level_factory):
+        _name, factory = simd_level_factory
+        for kw in (
+            {},
+            {"node": 1, "gpu": 2, "thread": 3},
+            {"thread": 3},
+            {"gpu": 2},
+            {"node": 7},
+        ):
+            scalar = simdrng.Xoshiro(42, **kw).bit_generator
+            simd = factory(**kw).bit_generator
+            st = simd.state["state"]
+            w = st["simd_width"]
+            assert [st["s"][r * w] for r in range(4)] == scalar.state["state"]["s"]
+            scalar = simdrng.Xoshiro(42, **kw).bit_generator
+            simd = factory(**kw).bit_generator
+            np.testing.assert_array_equal(scalar.random_raw(1), simd.random_raw(1))
+
+    def test_simd_lane_zero_equals_native(self):
+        for kw in ({}, {"node": 1, "gpu": 2, "thread": 3}, {"thread": 3}):
+            a = simdrng.XoshiroSIMD(42, **kw).bit_generator.state["state"]
+            b = simdrng.XoshiroNative(42, **kw).bit_generator.state["state"]
+            wa, wb = a["simd_width"], b["simd_width"]
+            assert [a["s"][r * wa] for r in range(4)] == [
+                b["s"][r * wb] for r in range(4)
+            ]
+
+    def test_plain_constructor_unchanged(self, level_factory):
+        # Plain-seed values pinned before the tag API landed. The plain lane
+        # layout keeps lane i at i * 2^128 of the seed sequence. The state is
+        # read before the first draw, because a draw fills the cache and
+        # advances the state.
+        _name, factory = level_factory
+        bg = factory().bit_generator
+        st = bg.state["state"]
+        w = st.get("simd_width", 1)
+        lane0 = [
+            0xBDD732262FEB6E95,
+            0x28EFE333B266F103,
+            0x47526757130F9F52,
+            0x581CE1FF0E4AE394,
+        ]
+        lane1 = [
+            0x81746704FDE896B5,
+            0x645E944932DAE0AE,
+            0xF4776829231C282C,
+            0x2393F9798732DBA1,
+        ]
+        assert [st["s"][r * w] for r in range(4)] == lane0
+        if w > 1:
+            assert [st["s"][r * w + 1] for r in range(4)] == lane1
+        assert int(bg.random_raw(1)[0]) == 0xD0764D4F4476689F
 
     def test_max_in_range_works(self, level_factory):
-        _name, kind, factory = level_factory
-        if kind == "scalar":
-            rng = factory(node=(1 << 64) - 1, gpu=(1 << 32) - 1, thread=(1 << 32) - 1)
-        else:
-            # The SIMD backends reach the C++ level via jump loops, so the full
-            # 2^32-1 max is infeasible in a unit test. A large in-range value
-            # exercises the same boundary check at the C++ level.
-            rng = factory(gpu=(1 << 16) - 1, thread=(1 << 16) - 1)
+        _name, factory = level_factory
+        rng = factory(node=(1 << 64) - 1, gpu=(1 << 32) - 1, thread=(1 << 32) - 1)
         assert rng.random(10).shape == (10,)
 
     def test_out_of_range_raises_valueerror(self, level_factory):
-        _name, kind, factory = level_factory
+        _name, factory = level_factory
         with pytest.raises(ValueError):
             factory(gpu=1 << 32)
         with pytest.raises(ValueError):
             factory(thread=1 << 32)
         with pytest.raises(ValueError):
-            factory(node=-1)
-        with pytest.raises(ValueError):
-            factory(gpu=-1)
-        with pytest.raises(ValueError):
-            factory(thread=-1)
-        if kind == "scalar":
+            factory(node=1 << 64)
+        for kw in ({"node": -1}, {"gpu": -1}, {"thread": -1}):
             with pytest.raises(ValueError):
-                factory(node=1 << 64)
-        else:
-            with pytest.raises(ValueError):
-                factory(node=1)
+                factory(**kw)
+        with pytest.raises(ValueError):
+            factory(gpu="1")
 
     def test_cluster_keyword_is_removed(self):
         # 'cluster' is a breaking removal with no alias: TypeError, not ValueError.
