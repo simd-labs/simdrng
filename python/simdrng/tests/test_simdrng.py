@@ -429,6 +429,29 @@ class TestStreamLevels:
             with pytest.raises(TypeError):
                 maker(42, cluster=1)
 
+    def test_none_level_raises_valueerror(self):
+        # A supplied None is a non-integer level, not an omitted keyword.
+        for maker in (
+            simdrng.Xoshiro,
+            simdrng.XoshiroSIMD,
+            simdrng.XoshiroNative,
+            simdrng.XoshiroBitGenerator,
+            simdrng.XoshiroSIMDBitGenerator,
+            simdrng.XoshiroNativeBitGenerator,
+        ):
+            for kw in ({"node": None}, {"gpu": None}, {"thread": None}):
+                with pytest.raises(ValueError):
+                    maker(42, **kw)
+
+    def test_omitted_keywords_keep_plain_constructor(self):
+        # Omitting every level keyword must keep the plain constructor.
+        for cls, factory in (
+            (simdrng.XoshiroBitGenerator, simdrng.Xoshiro),
+            (simdrng.XoshiroSIMDBitGenerator, simdrng.XoshiroSIMD),
+            (simdrng.XoshiroNativeBitGenerator, simdrng.XoshiroNative),
+        ):
+            assert cls(42).state == factory(42).bit_generator.state
+
 
 # ── Global generator ───────────────────────────────────────────────────────
 

@@ -89,10 +89,13 @@ template <typename T, typename... Levels> SIMDRNG_HD constexpr T pick_level(Leve
 ///   widths_tight        node 8 / gpu 8 / thread 24, block 2^24.
 ///     SplitMix64 (period 2^64): 2^24 outputs per stream. A stream that
 ///     draws more than 2^24 outputs runs into the next stream's numbers.
-///     MWC64X32 (period about 2^63): 2^24 outputs per stream. A stream that
-///     draws more than 2^24 outputs runs into the next stream's numbers.
 ///     Philox2x32 (64-bit counter): 2^24 counter blocks per stream. A stream
 ///     that draws more than 2^24 counter blocks runs into the next stream's
+///     numbers.
+///   widths_mwc_tight    node 8 / gpu 8 / thread 24, block 2^22.
+///     MWC64X32 uses a shorter block so the full address space stays inside
+///     its period (see mwc64x32.hpp): 2^(8+8+24+22) = 2^62 <= period. A
+///     stream that draws more than 2^22 outputs runs into the next stream's
 ///     numbers.
 ///   widths_xoshiro256   node 64 / gpu 32 / thread 32, block 2^127.
 ///     XoshiroScalar (period 2^256 - 1): 2^127 outputs per stream. The
@@ -120,6 +123,7 @@ struct stream_widths {
 };
 
 inline constexpr stream_widths widths_tight{8, 8, 24, 24};
+inline constexpr stream_widths widths_mwc_tight{8, 8, 24, 22};
 inline constexpr stream_widths widths_xoshiro256{64, 32, 32, 127};
 inline constexpr stream_widths widths_counter128{16, 16, 32, 64};
 inline constexpr stream_widths widths_counter256{64, 64, 64, 64};

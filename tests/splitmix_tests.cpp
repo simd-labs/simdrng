@@ -138,3 +138,7 @@ TEST_CASE("splitmix stream level contract", "[splitmix][stream]") {
   stream_level_contract::check_stream_levels<simdrng::SplitMix>(
       [](auto... levels) { return simdrng::SplitMix{kStreamSeed}.stream(levels...); });
 }
+
+TEST_CASE("splitmix zero tags equal omitted tags after a draw", "[splitmix][stream]") {
+  stream_level_contract::check_zero_tags_after_draw(simdrng::SplitMix{kStreamSeed}, {1, 2, 5});
+}

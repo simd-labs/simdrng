@@ -192,3 +192,9 @@ TEST_CASE("ChaCha stream level contract", "[chacha][stream]") {
   stream_level_contract::check_stream_levels<ChaCha20>(
       [](auto... levels) { return ChaCha20{kStreamKey, 0, 0}.stream(levels...); });
 }
+
+TEMPLATE_TEST_CASE("ChaCha zero tags equal omitted tags after a draw", "[chacha][stream]", simdrng::ChaCha<8>,
+                   simdrng::ChaCha<12>, simdrng::ChaCha<20>) {
+  // 8 results of 64 bits per block: k = 1, 4 (inside one block), 9 (past one boundary).
+  stream_level_contract::check_zero_tags_after_draw(TestType{kStreamKey, 0, 0}, {1, 4, 9});
+}

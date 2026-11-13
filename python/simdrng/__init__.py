@@ -195,21 +195,32 @@ class SplitMixBitGenerator(BitGeneratorBase):
         return bg
 
 
-def _levels_call(cls_ext, seed, node, gpu, thread):
-    """Call the extension constructor with the None rule.
+_OMITTED = object()
+"""Private sentinel for the omitted stream-level keywords. An explicit
+``None`` is a supplied value and raises ``ValueError`` like any other
+non-integer; only an omitted keyword selects the plain constructor or
+contributes a missing zero level."""
 
-    With all level keywords None, call the plain constructor. With any
-    level keyword, call the tag API and put the missing levels at 0. The
-    nanobind layer rejects None for ``nb::object``, so the None rule runs
-    here and the extension class sees only integers.
+
+def _levels_call(cls_ext, seed, node, gpu, thread):
+    """Call the extension constructor with the omitted-keyword rule.
+
+    With all level keywords omitted, call the plain constructor. With any
+    level keyword, call the tag API and put the omitted levels at 0. A
+    supplied ``None`` raises ``ValueError`` here, and a supplied non-integer
+    raises ``ValueError`` in the extension, both before the C++ core gets
+    the call.
     """
-    if node is None and gpu is None and thread is None:
+    if node is _OMITTED and gpu is _OMITTED and thread is _OMITTED:
         return cls_ext(seed)
+    for level in (("node", node), ("gpu", gpu), ("thread", thread)):
+        if level[1] is None:
+            raise ValueError(f"{level[0]} must be an integer, not None")
     return cls_ext(
         seed,
-        node=0 if node is None else node,
-        gpu=0 if gpu is None else gpu,
-        thread=0 if thread is None else thread,
+        node=0 if node is _OMITTED else node,
+        gpu=0 if gpu is _OMITTED else gpu,
+        thread=0 if thread is _OMITTED else thread,
     )
 
 
@@ -221,9 +232,9 @@ class XoshiroBitGenerator(BitGeneratorBase):
         self,
         seed: int,
         *,
-        node: int | None = None,
-        gpu: int | None = None,
-        thread: int | None = None,
+        node: int = _OMITTED,
+        gpu: int = _OMITTED,
+        thread: int = _OMITTED,
     ) -> None:
         """Wrap the scalar Xoshiro256++ core.
 
@@ -260,9 +271,9 @@ class XoshiroSIMDBitGenerator(BitGeneratorBase):
         self,
         seed: int,
         *,
-        node: int | None = None,
-        gpu: int | None = None,
-        thread: int | None = None,
+        node: int = _OMITTED,
+        gpu: int = _OMITTED,
+        thread: int = _OMITTED,
     ) -> None:
         """Wrap the runtime-dispatched Xoshiro256++ SIMD core.
 
@@ -301,9 +312,9 @@ if _XoshiroNative is not None:
             self,
             seed: int,
             *,
-            node: int | None = None,
-            gpu: int | None = None,
-            thread: int | None = None,
+            node: int = _OMITTED,
+            gpu: int = _OMITTED,
+            thread: int = _OMITTED,
         ) -> None:
             """Wrap the compile-time best-arch Xoshiro256++ core.
 
@@ -503,9 +514,9 @@ def SplitMix(seed: int) -> np.random.Generator:
 def Xoshiro(
     seed: int,
     *,
-    node: int | None = None,
-    gpu: int | None = None,
-    thread: int | None = None,
+    node: int = _OMITTED,
+    gpu: int = _OMITTED,
+    thread: int = _OMITTED,
 ) -> np.random.Generator:
     """Return ``np.random.Generator`` backed by scalar Xoshiro256++.
 
@@ -517,9 +528,9 @@ def Xoshiro(
 def XoshiroSIMD(
     seed: int,
     *,
-    node: int | None = None,
-    gpu: int | None = None,
-    thread: int | None = None,
+    node: int = _OMITTED,
+    gpu: int = _OMITTED,
+    thread: int = _OMITTED,
 ) -> np.random.Generator:
     """Return ``np.random.Generator`` backed by XoshiroSIMD (runtime SIMD dispatch).
 
@@ -533,9 +544,9 @@ def XoshiroSIMD(
 def XoshiroNative(
     seed: int,
     *,
-    node: int | None = None,
-    gpu: int | None = None,
-    thread: int | None = None,
+    node: int = _OMITTED,
+    gpu: int = _OMITTED,
+    thread: int = _OMITTED,
 ) -> np.random.Generator:
     """Return ``np.random.Generator`` backed by XoshiroNative (compile-time best arch).
 

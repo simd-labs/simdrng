@@ -67,4 +67,20 @@ template <class Gen, class Make> void check_stream_levels(Make make) {
   }
 }
 
+// After k output calls, stream() with no tags must produce the same next
+// outputs as stream() with every tag explicitly zero, on the same consumed
+// generator. counts cover a first draw, a position inside one block, and a
+// position past one block boundary for the generator under test.
+template <class Gen> void check_zero_tags_after_draw(Gen g, std::initializer_list<std::size_t> counts) {
+  for (const std::size_t k : counts) {
+    INFO("k: " << k);
+    Gen consumed = g;
+    for (std::size_t i = 0; i < k; ++i) {
+      (void)consumed();
+    }
+    REQUIRE(draw64(consumed.stream()) ==
+            draw64(consumed.stream(simdrng::node{0}, simdrng::gpu{0}, simdrng::thread{0})));
+  }
+}
+
 } // namespace stream_level_contract

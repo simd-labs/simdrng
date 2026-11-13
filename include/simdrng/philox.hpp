@@ -153,7 +153,10 @@ public:
    * (node 16 / gpu 16 / thread 32, block 2^64 counter blocks) for the 128-bit
    * counters, detail::widths_counter256 (node 64 / gpu 64 / thread 64, block
    * 2^64 counter blocks) for the 256-bit counter. Each stream owns its block
-   * and the low counter words keep the position inside it. A level value
+   * and the low counter words keep the position inside it. A zero distance
+   * (omitted levels or explicit zeros) keeps the cached block and the
+   * within-block index. A nonzero distance keeps the within-block index and
+   * rebuilds the addressed block. A level value
    * past its field fails hard in every build type (never an alias). O(1).
    * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
@@ -178,9 +181,14 @@ public:
       place(distance, detail::stream_level_checked(Wd.thread_bits, detail::pick_level<thread>(levels...).value),
             Wd.thread_shift());
     }
-    if constexpr (sizeof...(Levels) > 0) {
-      add_counter(g.m_counter, distance);
-      g.m_result_index = RESULTS_PER_BLOCK; // the position moved: drop any cached block
+    add_counter(g.m_counter, distance);
+    if (!distance_empty(distance) && g.m_result_index < RESULTS_PER_BLOCK) {
+      // The position moved: rebuild the block of the in-flight counter at the
+      // new position and keep the within-block index. A zero distance
+      // (omitted levels or explicit zeros) keeps the cache untouched.
+      counter_state block = g.m_counter;
+      dec_counter(block);
+      g.m_result_cache = simdrng_bit_cast<cache_state>(philox_rounds(block, g.m_key));
     }
     return g;
   }
@@ -410,6 +418,16 @@ private:
       if (ctr[i]-- != 0)
         break;
     }
+  }
+
+  // True when every word is zero (the no-move distance).
+  SIMDRNG_HD static constexpr SIMDRNG_ALWAYS_INLINE bool distance_empty(const counter_state &ctr) noexcept {
+    for (std::uint8_t i = 0; i < N; ++i) {
+      if (ctr[i] != 0) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // Places value at bit offset shift in the little-endian counter words. The

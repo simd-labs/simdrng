@@ -233,3 +233,7 @@ TEST_CASE("xoshiro256++ stream level contract", "[xoshiro256++][stream]") {
   stream_level_contract::check_stream_levels<simdrng::XoshiroScalar>(
       [](auto... levels) { return simdrng::XoshiroScalar{kStreamSeed}.stream(levels...); });
 }
+
+TEST_CASE("xoshiro256++ zero tags equal omitted tags after a draw", "[xoshiro256++][stream]") {
+  stream_level_contract::check_zero_tags_after_draw(simdrng::XoshiroScalar{kStreamSeed}, {1, 2, 5});
+}

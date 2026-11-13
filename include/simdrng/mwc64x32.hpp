@@ -72,12 +72,16 @@ public:
   /**
    * @brief Hierarchical stream selection. The levels select a position in the
    * one sequence the seed defines and never touch the (x, c) seed state. The
-   * tuple maps to the jump distance node * 2^56 + gpu * 2^48 + thread * 2^24
-   * in the field layout detail::widths_tight (node 8 / gpu 8 / thread 24
-   * bits). The stream starts at that distance, computed as A1^distance mod MOD
-   * in O(log distance). Each stream owns the 2^24 consecutive values from its
-   * start within the period, so streams are disjoint. A level value past its
-   * field fails hard in every build type (never an alias).
+   * tuple maps to the jump distance node * 2^54 + gpu * 2^46 + thread * 2^22
+   * in the field layout detail::widths_mwc_tight (node 8 / gpu 8 / thread 24
+   * bits, block 2^22). The stream starts at that distance, computed as
+   * A1^distance mod MOD in O(log distance). The period is (MOD - 1) / 2 =
+   * 0x7ff8a2fbffffffff < 2^63, so the block must be shorter than the other
+   * tight generators: 2^(8+8+24+L) <= period holds for L = 22 (2^62 <=
+   * period) and fails for L = 23 (2^63 > period). Each stream owns the 2^22
+   * consecutive values from its start within the period, so streams are
+   * disjoint. A level value past its field fails hard in every build type
+   * (never an alias).
    * @param levels Any subset of {node, gpu, thread}, in any order, each at most once.
    * @return The generator for the addressed stream.
    */
@@ -85,7 +89,7 @@ public:
     requires(detail::all_levels_v<Levels...> && detail::unique_levels_v<Levels...>)
   SIMDRNG_HD SIMDRNG_ALWAYS_INLINE constexpr MWC64X32 stream(Levels... levels) const noexcept {
     MWC64X32 g = *this;
-    const std::uint64_t distance = detail::level_distance64(detail::widths_tight, levels...);
+    const std::uint64_t distance = detail::level_distance64(detail::widths_mwc_tight, levels...);
     if (distance != 0) {
       g.jump(distance);
     }

@@ -314,3 +314,11 @@ TEMPLATE_TEST_CASE("Philox stream level contract", "[philox][stream]", simdrng::
   using G = TestType;
   stream_level_contract::check_stream_levels<G>([](auto... levels) { return G{kStreamSeed}.stream(levels...); });
 }
+
+TEMPLATE_TEST_CASE("Philox zero tags equal omitted tags after a draw", "[philox][stream]", simdrng::Philox4x32,
+                   simdrng::Philox2x32, simdrng::Philox4x64, simdrng::Philox2x64) {
+  using G = TestType;
+  // k = 1, a position inside one block, and one past a block boundary.
+  constexpr std::size_t rbp = G::RESULTS_PER_BLOCK;
+  stream_level_contract::check_zero_tags_after_draw(G{kStreamSeed}, {1, rbp > 1 ? rbp - 1 : 1, rbp + 1});
+}

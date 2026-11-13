@@ -119,9 +119,16 @@ static_assert(simdrng::MWC64X32::max() == std::numeric_limits<simdrng::MWC64X32:
 namespace {
 
 constexpr std::uint64_t kStreamSeed = 0x0102030405060708ULL;
-// detail::widths_tight: block 2^24 outputs (thread shift 24), gpu shift 48,
-// node shift 56.
-constexpr std::uint64_t kBlock = std::uint64_t{1} << 24;
+// detail::widths_mwc_tight: block 2^22 outputs (thread shift 22), gpu shift 46,
+// node shift 54.
+constexpr std::uint64_t kBlock = std::uint64_t{1} << 22;
+
+// The period of the generator is (MOD - 1) / 2 with MOD = 0xfff145f7ffffffff.
+static_assert((0xfff145f7ffffffffULL - 1) / 2 == 0x7ff8a2fbffffffffULL);
+// The table block length must keep the full address space inside the period:
+// 2^(8+8+24+22) = 2^62 <= period, while 2^(8+8+24+23) = 2^63 > period.
+static_assert(simdrng::detail::widths_mwc_tight.block_bits == 22);
+static_assert((std::uint64_t{1} << (8 + 8 + 24 + 22)) <= 0x7ff8a2fbffffffffULL);
 
 // The plain generator advanced by exactly n outputs, via the generator's own
 // jump machinery (jump(n) is exact, the C reference jump_n pins it above).
@@ -132,7 +139,7 @@ simdrng::MWC64X32 advanced_by(simdrng::MWC64X32 g, std::uint64_t outputs) {
 
 } // namespace
 
-TEST_CASE("mwc64x32 stream thread{v} equals jump(v * 2^24)", "[mwc64x32][stream]") {
+TEST_CASE("mwc64x32 stream thread{v} equals jump(v * 2^22)", "[mwc64x32][stream]") {
   for (const std::uint64_t seed : kSeeds) {
     for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{3}, std::uint64_t{0xFFFFFF}}) {
       INFO("seed: " << seed << " v: " << v);
@@ -142,22 +149,22 @@ TEST_CASE("mwc64x32 stream thread{v} equals jump(v * 2^24)", "[mwc64x32][stream]
   }
 }
 
-TEST_CASE("mwc64x32 stream gpu{v} equals jump(v * 2^48)", "[mwc64x32][stream]") {
+TEST_CASE("mwc64x32 stream gpu{v} equals jump(v * 2^46)", "[mwc64x32][stream]") {
   for (const std::uint64_t seed : kSeeds) {
     for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{3}, std::uint64_t{255}}) {
       INFO("seed: " << seed << " v: " << v);
       REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::gpu{v}).getState() ==
-              advanced_by(simdrng::MWC64X32{seed}, v * (std::uint64_t{1} << 48)).getState());
+              advanced_by(simdrng::MWC64X32{seed}, v * (std::uint64_t{1} << 46)).getState());
     }
   }
 }
 
-TEST_CASE("mwc64x32 stream node{v} equals jump(v * 2^56)", "[mwc64x32][stream]") {
+TEST_CASE("mwc64x32 stream node{v} equals jump(v * 2^54)", "[mwc64x32][stream]") {
   for (const std::uint64_t seed : kSeeds) {
     for (const std::uint64_t v : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{3}, std::uint64_t{255}}) {
       INFO("seed: " << seed << " v: " << v);
       REQUIRE(simdrng::MWC64X32{seed}.stream(simdrng::node{v}).getState() ==
-              advanced_by(simdrng::MWC64X32{seed}, v * (std::uint64_t{1} << 56)).getState());
+              advanced_by(simdrng::MWC64X32{seed}, v * (std::uint64_t{1} << 54)).getState());
     }
   }
 }
@@ -196,7 +203,7 @@ TEST_CASE("mwc64x32 max in-range levels work and stay distinct", "[mwc64x32][str
   // node 8 bits (255), gpu 8 bits (255) and thread 24 bits (0xFFFFFF) are the
   // largest values that fit their fields.
   constexpr std::uint64_t max_distance =
-      (std::uint64_t{255} << 56) | (std::uint64_t{255} << 48) | (std::uint64_t{0xFFFFFF} << 24);
+      (std::uint64_t{255} << 54) | (std::uint64_t{255} << 46) | (std::uint64_t{0xFFFFFF} << 22);
   const auto maxed =
       simdrng::MWC64X32{kStreamSeed}.stream(simdrng::node{255}, simdrng::gpu{255}, simdrng::thread{0xFFFFFFULL});
   REQUIRE(maxed.getState() == advanced_by(simdrng::MWC64X32{kStreamSeed}, max_distance).getState());
@@ -223,4 +230,26 @@ TEST_CASE("mwc64x32 sol regression: fallback and reduction node pairs now differ
 TEST_CASE("mwc64x32 stream level contract", "[mwc64x32][stream]") {
   stream_level_contract::check_stream_levels<simdrng::MWC64X32>(
       [](auto... levels) { return simdrng::MWC64X32{kSeeds[0]}.stream(levels...); });
+}
+
+TEST_CASE("mwc64x32 sol regression: reviewed and max tuples share no state", "[mwc64x32][stream]") {
+  // Sol review 2 found tuple (127, 248, 10681344) at distance 2^64 - 2^24 in
+  // the old 2^24-block layout, one past the period 0x7ff8a2fbffffffff, so its
+  // start equalled stream (0, 0, 0) after one output. With the 2^22 block the
+  // full address space stays inside the period and no two tuples share a
+  // state. Include the max-tuple versus tuple-zero pair.
+  const auto tuple0 = simdrng::MWC64X32{42}.stream();
+  const auto maxed = simdrng::MWC64X32{42}.stream(simdrng::node{255}, simdrng::gpu{255}, simdrng::thread{0xFFFFFFULL});
+  const auto reviewed = simdrng::MWC64X32{42}.stream(simdrng::node{127}, simdrng::gpu{248}, simdrng::thread{10681344});
+  auto offset1 = simdrng::MWC64X32{42};
+  offset1();
+  REQUIRE(reviewed.getState() != tuple0.getState());
+  REQUIRE(reviewed.getState() != offset1.getState());
+  REQUIRE(reviewed.getState() != maxed.getState());
+  REQUIRE(maxed.getState() != tuple0.getState());
+  REQUIRE(maxed.getState() != offset1.getState());
+}
+
+TEST_CASE("mwc64x32 zero tags equal omitted tags after a draw", "[mwc64x32][stream]") {
+  stream_level_contract::check_zero_tags_after_draw(simdrng::MWC64X32{kStreamSeed}, {1, 2, 5});
 }

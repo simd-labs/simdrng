@@ -90,6 +90,15 @@ TEST_CASE("TAG LEVEL CONTRACT", "[xoshiro256++][stream]") {
 #endif
 }
 
+TEST_CASE("TAG ZERO TAGS EQUAL OMITTED TAGS AFTER A DRAW", "[xoshiro256++][stream]") {
+  const std::uint64_t seed = 42;
+  // k = 1, 128 (inside one 256-value cache), 257 (past a cache boundary).
+  stream_level_contract::check_zero_tags_after_draw(simdrng::XoshiroSIMD{seed}, {1, 128, 257});
+#ifndef XSIMD_NO_SUPPORTED_ARCHITECTURE
+  stream_level_contract::check_zero_tags_after_draw(simdrng::XoshiroNative{seed}, {1, 128, 257});
+#endif
+}
+
 TEST_CASE("TAG CONSTRUCTOR MATCHES STREAM", "[xoshiro256++][stream]") {
   const std::uint64_t seed = 42;
   const simdrng::XoshiroSIMD by_ctor{seed, simdrng::node{1}, simdrng::gpu{2}, simdrng::thread{3}};
