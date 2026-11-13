@@ -42,7 +42,9 @@ Pre-1.0, the public API may change between minor versions.
   gpu 16 bits and thread 32 bits. Each ChaCha stream owns 2^64 counter blocks.
   A stream that draws more than its length runs into the next stream's numbers,
   and nothing checks for this. Xoshiro256++ gives 2^127 outputs per stream.
-  SplitMix64 and MWC64X32 give 2^24 outputs per stream. Philox 2x32 gives 2^24
+  SplitMix64 gives 2^24 outputs per stream. MWC64X32 gives 2^22 outputs per
+  stream, so the full address space stays inside its period
+  (`(MOD - 1) / 2 = 0x7ff8a2fbffffffff < 2^63`). Philox 2x32 gives 2^24
   counter blocks per stream. ChaCha 8/12/20, Philox 4x32, Philox 2x64 and
   Philox 4x64 give 2^64 counter blocks per stream.
   A ChaCha stream past its length repeats its own numbers, because its counter

@@ -119,7 +119,7 @@ widths and the stream length for each generator. The width table in
 |-------------------|------------|-----------|--------------|------------------------------------|
 | Xoshiro256++      | no limit   | 2^32 - 1  | 2^32 - 1     | 2^127 outputs                      |
 | SplitMix64        | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 outputs                       |
-| MWC64X32          | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 outputs                       |
+| MWC64X32          | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^22 outputs                       |
 | ChaCha 8/12/20    | 2^16 - 1   | 2^16 - 1  | 2^32 - 1     | 2^64 counter blocks (2^67 outputs) |
 | Philox 2x32       | 2^8 - 1    | 2^8 - 1   | 2^24 - 1     | 2^24 counter blocks                |
 | Philox 4x32, 2x64 | 2^16 - 1   | 2^16 - 1  | 2^32 - 1     | 2^64 counter blocks                |
@@ -155,7 +155,7 @@ length:
   stream's numbers, and nothing checks for this.
 - A SplitMix64 stream that draws more than 2^24 outputs runs into the next
   stream's numbers, and nothing checks for this.
-- A MWC64X32 stream that draws more than 2^24 outputs runs into the next
+- A MWC64X32 stream that draws more than 2^22 outputs runs into the next
   stream's numbers, and nothing checks for this.
 - A ChaCha 8/12/20 stream that draws more than 2^64 counter blocks repeats its
   own numbers, and nothing checks for this. The counter does not carry into the
